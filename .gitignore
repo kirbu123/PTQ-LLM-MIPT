@@ -142,6 +142,7 @@ scripts/
 int8_models/
 logs/
 *.pt
+*.bin
 slurm_log/
 
 # OS specific

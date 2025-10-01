@@ -35,7 +35,7 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from transformers import (
     CONFIG_MAPPING,
@@ -487,11 +487,11 @@ def main():
                 perplexity = evaluation(model, eval_dataloader)
                 print_rank_0 (f"*************************initialization with {perplexity}***********************************")            
             model.train()
-            for step, batch in enumerate(train_dataloader):
+            for step, batch in tqdm(enumerate(train_dataloader), desc=f'Train proccess'):
                 batch = to_device(batch)                
                 outputs = model(**batch, output_hidden_states=True, output_attentions=True)
                 loss = outputs.loss
-                # loss = loss / args.gradient_accumulation_steps
+                # loss = loss / args.device
                 model.backward(loss)
                 model.step()
                 
