@@ -200,6 +200,10 @@ def parse_args():
                         type=int,
                         default=-1,
                         help="local_rank for distributed training on gpus")
+    parser.add_argument("--device",
+                        type=int,
+                        default=0,
+                        help="gpu device for model ans tensors")
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
@@ -232,17 +236,21 @@ def main():
         level=logging.INFO,
     )
 
+    device_name = f'cuda:{args.device}'
+
     if args.local_rank == -1:
-        device = torch.device("cuda")
+        device = torch.device(device_name)
     else:
         torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
+        device = torch.device('cuda', args.local_rank)
         # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
         # torch.distributed.init_process_group(backend='nccl')
         deepspeed.init_distributed()
+
     def print_rank_0(msg):
         if args.local_rank <= 0:
             print(msg)
+
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
@@ -491,7 +499,6 @@ def main():
                 batch = to_device(batch)                
                 outputs = model(**batch, output_hidden_states=True, output_attentions=True)
                 loss = outputs.loss
-                # loss = loss / args.device
                 model.backward(loss)
                 model.step()
                 
