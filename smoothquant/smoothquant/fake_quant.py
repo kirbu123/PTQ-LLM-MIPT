@@ -138,6 +138,37 @@ class W8A8Linear(nn.Module):
         return f"W8A8Linear({self.in_features}, {self.out_features}, bias={self.bias is not None}, weight_quant={self.weight_quant_name}, act_quant={self.act_quant_name}, output_quant={self.output_quant_name})"
 
 
+def quantize_gpt(
+    model, weight_quant="per_tensor", act_quant="per_tensor", quantize_bmm_input=True 
+):
+    from transformers.models.gpt2.modeling_gpt2 import (
+        GPT2Attention,
+        GPT2Block,
+    )
+
+    for name, m in model.transformer.named_modules():
+        if isinstance(m, GPT2Block):
+            # Quantize MLP layers
+            m.mlp.c_fc = W8A8Linear.from_float(
+                m.mlp.c_fc, weight_quant=weight_quant, act_quant=act_quant
+            )
+            m.mlp.c_proj = W8A8Linear.from_float(
+                m.mlp.c_proj, weight_quant=weight_quant, act_quant=act_quant
+            )
+        elif isinstance(m, GPT2Attention):
+            # GPT-2 uses combined QKV projection (c_attn)
+            m.c_attn = W8A8Linear.from_float(
+                m.c_attn,
+                weight_quant=weight_quant,
+                act_quant=act_quant,
+                quantize_output=quantize_bmm_input,
+            )
+            # Quantize output projection
+            m.c_proj = W8A8Linear.from_float(
+                m.c_proj, weight_quant=weight_quant, act_quant=act_quant
+            )
+    return model
+
 def quantize_opt(
     model, weight_quant="per_tensor", act_quant="per_tensor", quantize_bmm_input=True
 ):
@@ -318,7 +349,15 @@ def quantize_model(
     from transformers.models.mistral.modeling_mistral import MistralPreTrainedModel
     from transformers.models.mixtral.modeling_mixtral import MixtralPreTrainedModel
     from transformers.models.falcon.modeling_falcon import FalconPreTrainedModel
+    from transformers.models.gpt2.modeling_gpt2 import GPT2LMHeadModel
 
+    if isinstance(model, GPT2LMHeadModel):
+        return quantize_gpt(
+            model,
+            weight_quant=weight_quant,
+            act_quant=act_quant,
+            quantize_bmm_input=quantize_bmm_input,
+        )
     if isinstance(model, OPTPreTrainedModel):
         return quantize_opt(
             model,

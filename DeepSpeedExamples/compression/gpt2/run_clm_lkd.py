@@ -61,7 +61,10 @@ from deepspeed.compression.helper import convert_conv1d_to_linear
 import numpy as np
 from transformers.modeling_utils import Conv1D
 
+from torch.utils.tensorboard import SummaryWriter
+
 logger = logging.getLogger(__name__)
+
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -230,6 +233,10 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Setup tensorboard writer
+    tb_output_dir = os.path.join(args.output_dir, 'tensorboard')
+    writer = SummaryWriter(log_dir=tb_output_dir)
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
 
@@ -462,8 +469,7 @@ def main():
             perplexity = float("inf")
         return perplexity
 
-
-    def training(model, train_dataloader, eval_dataloader, num_train_epochs, args):
+    def training(model, train_dataloader, eval_dataloader, num_train_epochs, args, writer):
         # Optimizer
         previous_best = None
         # Split weights in two groups, one with weight decay and the other not.
@@ -495,7 +501,7 @@ def main():
             args=args,
             lr_scheduler=lr_scheduler,
             dist_init_required=True)
-        
+
         # LKD Setup - Load teacher model
         print_rank_0("Initializing teacher model for LKD...")
         teacher_config = AutoConfig.from_pretrained(args.model_name_or_path)
@@ -511,7 +517,7 @@ def main():
             model=teacher_model,
             args=args,
             dist_init_required=True)
-        
+
         # Initial evaluation
         perplexity = evaluation(model, eval_dataloader)
         print_rank_0(f"Initial student perplexity: {perplexity}")
@@ -527,7 +533,7 @@ def main():
             
             # Extract student layer
             student_layer = recursive_getattr(model.module, f'transformer.h.{l}')
-            
+
             # Create optimizer for this specific layer
             optimizer_param = [
                 {
@@ -543,9 +549,9 @@ def main():
             layer_optimizer = AdamW(optimizer_param, lr=args.learning_rate)
             
             updated_steps = 0
-            
+
             for epoch in tqdm(range(args.num_train_epochs), desc=f'Train proccessing layer {l}'):
-                for step, batch in tqdm(enumerate(train_dataloader), desc='Batch proccessing'):
+                for step, batch in enumerate(train_dataloader):
                     batch = to_device(batch)
 
                     with torch.no_grad():
@@ -569,14 +575,23 @@ def main():
                     updated_steps += 1
                     if updated_steps >= args.max_train_steps:
                         break
-                
+
+                    writer.add_scalar(f'training/mse_loss/layer_{l}', loss.item(), step)
+                    writer.flush()
+            
                 if updated_steps >= args.max_train_steps:
                     break
-        
+
+            # Eval after l training
+            perplexity = evaluation(model, eval_dataloader)
+            print_rank_0(f"After layer {l} student eval perplexity: {perplexity}")
+
+            writer.add_scalar('eval/perplexity', perplexity, l)
+            writer.add_scalar('eval/layer', l, l)
+            writer.flush()
+
+
         # Evaluate after LKD
-        perplexity = evaluation(model, eval_dataloader)
-
-
         print_rank_0(f"***** Evaluating perplexity, Epoch {args.num_train_epochs}/{num_train_epochs} *****")
         perplexity = evaluation(model, eval_dataloader)
         print_rank_0(f"Before cleaning, Epoch at {args.num_train_epochs} with Student Perplexity: {perplexity}")
@@ -602,7 +617,7 @@ def main():
     model = init_compression(model, args.deepspeed_config)
     print_rank_0('WARNING: saving the quantized model with Linear Module instead of COV1D')
 
-    training(model, train_dataloader, eval_dataloader, args.num_train_epochs, args)
+    training(model, train_dataloader, eval_dataloader, args.num_train_epochs, args, writer)
 
     model = redundancy_clean(model, args.deepspeed_config)
     perplexity = evaluation(model, eval_dataloader)
@@ -615,7 +630,7 @@ def main():
     model_to_save = model.module if hasattr(model, 'module') else model
     output_model_file = os.path.join(quant_output_dir, "pytorch_model.bin")
     torch.save(model_to_save.state_dict(), output_model_file)
-    
+
 
 if __name__ == "__main__":
     main()

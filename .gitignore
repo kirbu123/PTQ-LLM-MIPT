@@ -149,3 +149,6 @@ slurm_log/
 
 # OS specific
 .DS_Store
+
+# Tensorboard
+tensorboard/
