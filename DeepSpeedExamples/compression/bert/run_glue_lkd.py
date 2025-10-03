@@ -485,7 +485,7 @@ def main():
     model.eval()
     teacher_model.eval()
     start_time = time.time()
-    
+
     for l in range(model.module.config.num_hidden_layers): # iterate across BERT layers
         print_rank_0(f"layer {l}")
         student_layer = recursive_getattr(model.module, f'bert.encoder.layer.{l}')  # extract the lth layer of student
@@ -499,7 +499,7 @@ def main():
             "params": [p for n, p in student_layer.named_parameters() if any(nd in n for nd in no_decay)],
             "weight_decay": 0.0,
         },
-        ]  
+        ]
 
         optimizer = AdamW(optimizer_param, lr=args.learning_rate) 
 

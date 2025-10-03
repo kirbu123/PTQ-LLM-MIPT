@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from transformers.models.gpt2.modeling_gpt2 import GPT2Block
 from transformers.models.opt.modeling_opt import OPTDecoderLayer
 from transformers.models.bloom.modeling_bloom import BloomBlock
 from transformers.models.llama.modeling_llama import LlamaDecoderLayer, LlamaRMSNorm
@@ -74,6 +75,18 @@ def smooth_ln_fcs_llama_like(ln, fcs, act_scales, alpha=0.5):
 @torch.no_grad()
 def smooth_lm(model, scales, alpha=0.5):
     for name, module in model.named_modules():
+        if isinstance(module, GPT2Block):
+            attn_ln = module.ln_1
+            qkv = [
+                module.attn.c_attn,
+            ]
+            qkv_input_scales = scales[name + ".attn.c_attn"]
+            smooth_ln_fcs(attn_ln, qkv, qkv_input_scales, alpha)
+
+            ffn_ln = module.ln_2
+            fc1 = module.mlp.c_fc
+            fc1_input_scales = scales[name + ".mlp.c_fc"]
+            smooth_ln_fcs(ffn_ln, fc1, fc1_input_scales, alpha)
         if isinstance(module, OPTDecoderLayer):
             attn_ln = module.self_attn_layer_norm
             qkv = [

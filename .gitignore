@@ -138,6 +138,8 @@ applications/DeepSpeed-Chat/data
 
 # SmoothQuant specific
 dataset/
+datsets/
+*.zst
 scripts/
 int8_models/
 logs/
