@@ -576,9 +576,9 @@ def main():
                     if updated_steps >= args.max_train_steps:
                         break
 
-                    writer.add_scalar(f'training/mse_loss/layer_{l}', loss.item(), step)
+                    writer.add_scalar(f'training/mse_loss/layer_{l}', loss.item(), updated_steps)
                     writer.flush()
-            
+
                 if updated_steps >= args.max_train_steps:
                     break
 

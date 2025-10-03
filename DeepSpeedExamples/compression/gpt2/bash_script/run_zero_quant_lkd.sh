@@ -33,6 +33,6 @@ python -m torch.distributed.launch --nproc_per_node=1 \
     --deepspeed_config ${CONFIG} \
     --deepspeed \
     --device ${DEVICE} \
-    --learning_rate 1e-4 \
+    --learning_rate 1e-5 \
     --weight_decay 0.0 \
     --output_dir ${SAVE_PATH} &>> ${SAVE_PATH}/train.log
