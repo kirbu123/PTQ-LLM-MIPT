@@ -10,7 +10,8 @@ mkdir -p ${SAVE_PATH}
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% the following command will first download huggingface models and then compress %%%%%%%
 
 # Set gpt-based model
-MODEL=openai-community/gpt2-large
+# MODEL=openai-community/gpt2-large
+MODEL=facebook/opt-1.3b
 DEVICE=0
 
 ######### fp16
@@ -33,6 +34,6 @@ python -m torch.distributed.launch --nproc_per_node=1 \
     --deepspeed_config ${CONFIG} \
     --deepspeed \
     --device ${DEVICE} \
-    --learning_rate 1e-5 \
+    --learning_rate 5e-6 \
     --weight_decay 0.0 \
     --output_dir ${SAVE_PATH} &>> ${SAVE_PATH}/train.log

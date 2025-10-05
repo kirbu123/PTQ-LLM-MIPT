@@ -9,6 +9,8 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 
+from transformers.models.gpt2.modeling_gpt2 import Conv1D
+
 
 def get_act_scales(model, tokenizer, dataset_path, num_samples=512, seq_len=512):
     model.eval()
@@ -31,7 +33,7 @@ def get_act_scales(model, tokenizer, dataset_path, num_samples=512, seq_len=512)
 
     hooks = []
     for name, m in model.named_modules():
-        if isinstance(m, nn.Linear):
+        if isinstance(m, (nn.Linear, Conv1D)):
             hooks.append(
                 m.register_forward_hook(functools.partial(stat_input_hook, name=name))
             )
@@ -84,7 +86,7 @@ def get_static_decoder_layer_scales(
 
     hooks = []
     for name, m in model.named_modules():
-        if isinstance(m, torch.nn.Linear):
+        if isinstance(m, (torch.nn.Linear, Conv1D)):
             hooks.append(m.register_forward_hook(partial(stat_io_hook, name=name)))
 
     print("Collecting activation scales...")

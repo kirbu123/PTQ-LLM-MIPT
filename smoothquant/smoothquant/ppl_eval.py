@@ -20,13 +20,14 @@ parser.add_argument(
 parser.add_argument("--n_samples", type=int, default=None)
 parser.add_argument("--smooth", action="store_true")
 parser.add_argument("--quantize", action="store_true")
-
+parser.add_argument("--device", type=int, default=None)
 
 args = parser.parse_args()
 alpha = args.alpha
 model_path = args.model_path
 act_scales_path = args.act_scales_path
 n_samples = args.n_samples
+device = f'cuda:{args.device}'
 
 
 class Evaluator:
@@ -64,15 +65,17 @@ class Evaluator:
 
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-evaluator = Evaluator(dataset, tokenizer, "cuda", n_samples=n_samples)
+evaluator = Evaluator(dataset, tokenizer, device, n_samples=n_samples)
 
 model = AutoModelForCausalLM.from_pretrained(
     model_path, torch_dtype=torch.bfloat16, device_map="auto"
 )
 
 if args.smooth:
+    print('smooth proccess...')
     act_scales = torch.load(act_scales_path)
     smooth_lm(model, act_scales, alpha)
+    print('smooth ends')
 if args.quantize:
     model = quantize_model(
         model,
