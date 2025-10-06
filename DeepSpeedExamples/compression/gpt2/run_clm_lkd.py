@@ -63,8 +63,10 @@ from transformers.modeling_utils import Conv1D
 
 from torch.utils.tensorboard import SummaryWriter
 
-logger = logging.getLogger(__name__)
+from smoothquant.smoothquant.calibration import get_act_scales
+from smoothquant.smoothquant.smooth import smooth_lm
 
+logger = logging.getLogger(__name__)
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
 
@@ -211,6 +213,22 @@ def parse_args():
                         type=int,
                         default=0,
                         help="gpu device for model ans tensors")
+    parser.add_argument("--smooth", action="store_true")
+    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument(
+        "--smooth_dataset_path",
+        type=str,
+        default="dataset/val.jsonl.zst",
+        help="location of the calibration dataset, we use the validation set of the Pile dataset",
+    )
+    parser.add_argument(
+        "--smooth_output_path",
+        type=str,
+        default="act_scales/opt-1.3b.pt",
+        help="where to save the act scales",
+    )
+    parser.add_argument("--num_samples", type=int, default=512)
+    parser.add_argument("--seq_len", type=int, default=512)
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
@@ -339,6 +357,20 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
     model.to(device)
+
+    if args.smooth:
+        print_rank_0('start smooth operation...')
+        act_scales = get_act_scales(
+            model, tokenizer, args.smooth_dataset_path, args.num_samples, args.seq_len
+        )
+
+        os.makedirs(os.path.dirname(args.smooth_output_path), exist_ok=True)
+        torch.save(act_scales, args.smooth_output_path)
+
+        smooth_lm(model, act_scales, args.alpha)
+        print_rank_0('smooth operation ends successfully!')
+        print_rank_0(f'smooth weights saved in: {args.smooth_output_path}')
+
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     column_names = raw_datasets["train"].column_names
@@ -528,6 +560,14 @@ def main():
         # LKD Training Loop
         print_rank_0("Starting Layer-wise Knowledge Distillation...")
 
+        # Create dir for saving quantized model
+        if args.output_dir is not None:
+            print_rank_0('creating model save dir ...')
+            if not os.path.isdir(args.output_dir):
+                os.makedirs(args.output_dir)
+
+        best_perplexity = -1
+
         for l in range(model.module.config.n_layer):  # GPT-2 uses n_layer instead of num_hidden_layers
             print_rank_0(f"Training layer {l}")
             
@@ -590,25 +630,19 @@ def main():
             writer.add_scalar('eval/layer', l, l)
             writer.flush()
 
+            if args.output_dir is not None and (best_perplexity == -1 or best_perplexity > perplexity):
+                print_rank_0(f'saving best quantized model after tuning on layer {l}...')
+                if torch.distributed.get_rank() == 0:
+                    model_to_save = model.module if hasattr(model, 'module') else model
+                    WEIGHTS_NAME = "quantized_model.pt"
+                    output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
+                    torch.save(model_to_save.state_dict(), output_model_file)
+                    tokenizer.save_vocabulary(args.output_dir)
 
         # Evaluate after LKD
         print_rank_0(f"***** Evaluating perplexity, Epoch {args.num_train_epochs}/{num_train_epochs} *****")
         perplexity = evaluation(model, eval_dataloader)
         print_rank_0(f"Before cleaning, Epoch at {args.num_train_epochs} with Student Perplexity: {perplexity}")
-        if args.output_dir is not None:
-            print_rank_0('saving model ...')
-            if not os.path.isdir(args.output_dir):
-                os.makedirs(args.output_dir)
-            if torch.distributed.get_rank() == 0:
-                model_to_save = model.module if hasattr(model, 'module') else model
-                # CONFIG_NAME = "config.json"
-                WEIGHTS_NAME = "pytorch_model.bin"
-                output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
-                #output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
-                torch.save(model_to_save.state_dict(), output_model_file)
-                #output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
-                #model_to_save.config.to_json_file(output_config_file)
-                tokenizer.save_vocabulary(args.output_dir)
 
 
     perplexity = evaluation(model, eval_dataloader)
