@@ -36,6 +36,7 @@ import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 from transformers import (
@@ -568,9 +569,9 @@ def main():
 
         best_perplexity = -1
 
-        for l in range(model.module.config.n_layer):  # GPT-2 uses n_layer instead of num_hidden_layers
+        for l in range(model.module.config.n_layer - 1):  # GPT-2 LKD crash after last layer (that is why n_layer - 1)
             print_rank_0(f"Training layer {l}")
-            
+
             # Extract student layer
             student_layer = recursive_getattr(model.module, f'transformer.h.{l}')
 
@@ -586,8 +587,13 @@ def main():
                 },
             ]
 
+            # Set optimiser
             layer_optimizer = AdamW(optimizer_param, lr=args.learning_rate)
-            
+            num_training_steps = min(len(train_dataloader) * args.num_train_epochs, args.max_train_steps)
+
+            # Set scheduler
+            layer_scheduler = CosineAnnealingLR(layer_optimizer, T_max=num_training_steps)
+
             updated_steps = 0
 
             for epoch in tqdm(range(args.num_train_epochs), desc=f'Train proccessing layer {l}'):
@@ -597,21 +603,22 @@ def main():
                     with torch.no_grad():
                         # Get teacher outputs
                         teacher_out = teacher_model(**batch, output_hidden_states=True)
-                    
+
                     # Extract layer inputs and outputs
                     layer_input = teacher_out.hidden_states[l]  # l-th layer input
                     teacher_o = teacher_out.hidden_states[l + 1]  # l-th layer output
-                    
+
                     # Get student layer output
                     student_o = student_layer(layer_input)[0]  # GPT-2 layer forward pass
-                    
+
                     # Calculate MSE loss between teacher and student layer outputs
                     loss = torch.nn.functional.mse_loss(student_o, teacher_o)
 
                     layer_optimizer.zero_grad()
                     loss.backward()
                     layer_optimizer.step()
-                    
+                    layer_scheduler.step() 
+
                     updated_steps += 1
                     if updated_steps >= args.max_train_steps:
                         break
@@ -631,12 +638,28 @@ def main():
             writer.flush()
 
             if args.output_dir is not None and (best_perplexity == -1 or best_perplexity > perplexity):
+                best_perplexity = perplexity # Update best perplexity on train
                 print_rank_0(f'saving best quantized model after tuning on layer {l}...')
                 if torch.distributed.get_rank() == 0:
                     model_to_save = model.module if hasattr(model, 'module') else model
+
+                    # Count model parameters
+                    total_params = sum(p.numel() for p in model_to_save.parameters())
+                    trainable_params = sum(p.numel() for p in model_to_save.parameters() if p.requires_grad)
+
+                    print_rank_0(f"Total parameters: {total_params:,}")
+                    print_rank_0(f"Trainable parameters: {trainable_params:,}")
+
                     WEIGHTS_NAME = "quantized_model.pt"
                     output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
                     torch.save(model_to_save.state_dict(), output_model_file)
+
+                    # Calculate checkpoint file size
+                    checkpoint_size = os.path.getsize(output_model_file)  # Size in bytes
+                    checkpoint_size_mb = checkpoint_size / (1024 * 1024)  # Convert to MB
+                    checkpoint_size_gb = checkpoint_size / (1024 * 1024 * 1024)  # Convert to GB
+                    print_rank_0(f"Checkpoint file size: {checkpoint_size:,} bytes ({checkpoint_size_mb:.2f} MB / {checkpoint_size_gb:.2f} GB)")
+
                     tokenizer.save_vocabulary(args.output_dir)
 
         # Evaluate after LKD
