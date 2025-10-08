@@ -628,7 +628,7 @@ def main():
                         teacher_o_next = teacher_out.hidden_states[l + 2]  # l-th layer output
                         student_o_next = student_layer_next(student_o)
                         next_reg_lam = args.next_reg_lam
-                        loss = loss + next_reg_lam * torch.nn.functional.mse_loss(student_o_next, teacher_o_next)
+                        loss = loss + next_reg_lam * torch.nn.functional.l1_loss(student_o_next, teacher_o_next)
 
                     layer_optimizer.zero_grad()
                     loss.backward()
