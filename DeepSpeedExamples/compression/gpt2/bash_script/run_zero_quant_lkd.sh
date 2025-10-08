@@ -15,7 +15,7 @@ mkdir -p ${SAVE_PATH}
 # Set gpt-based model
 MODEL=openai-community/gpt2-large
 DEVICE=0
-dataset_config_name=wikitext-2-raw-v1
+dataset_config_name=wikitext-103-raw-v1
 
 ######### fp16
 
