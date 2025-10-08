@@ -147,6 +147,12 @@ def parse_args():
         default=5e-5,
         help="Initial learning rate (after the potential warmup period) to use.",
     )
+    parser.add_argument(
+        '--next_reg_lam',
+        type=float,
+        default=0.1,
+        help='Next regularization loss coeficient'
+    )
     parser.add_argument("--weight_decay", type=float, default=0.0, help="Weight decay to use.")
     parser.add_argument("--num_train_epochs", type=int, default=3, help="Total number of training epochs to perform.")
     parser.add_argument(
@@ -575,6 +581,10 @@ def main():
             # Extract student layer
             student_layer = recursive_getattr(model.module, f'transformer.h.{l}')
 
+            student_layer_next = None
+            if args.next_reg_lam > 0. and l + 2 < model.module.config.n_layer:
+                student_layer_next = recursive_getattr(model.module, f'transformer.h.{l + 1}')
+
             # Create optimizer for this specific layer
             optimizer_param = [
                 {
@@ -614,6 +624,12 @@ def main():
                     # Calculate MSE loss between teacher and student layer outputs
                     loss = torch.nn.functional.mse_loss(student_o, teacher_o)
 
+                    if student_layer_next is not None:
+                        teacher_o_next = teacher_out.hidden_states[l + 2]  # l-th layer output
+                        student_o_next = student_layer_next(student_o)
+                        next_reg_lam = args.next_reg_lam
+                        loss = loss + next_reg_lam * torch.nn.functional.mse_loss(student_o_next, teacher_o_next)
+
                     layer_optimizer.zero_grad()
                     loss.backward()
                     layer_optimizer.step()
@@ -642,6 +658,9 @@ def main():
                 print_rank_0(f'saving best quantized model after tuning on layer {l}...')
                 if torch.distributed.get_rank() == 0:
                     model_to_save = model.module if hasattr(model, 'module') else model
+
+                    # Model weights dtype
+                    model_weights_dtype = model.weights
 
                     # Count model parameters
                     total_params = sum(p.numel() for p in model_to_save.parameters())

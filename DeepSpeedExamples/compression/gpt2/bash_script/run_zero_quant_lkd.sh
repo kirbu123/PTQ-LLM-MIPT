@@ -37,6 +37,7 @@ python -m torch.distributed.launch --nproc_per_node=1 \
     --deepspeed \
     --device ${DEVICE} \
     --learning_rate 5e-6 \
+    --next_reg_lam 0.1 \
     --weight_decay 0.0 \
     --smooth \
     --smooth_output_path ${SAVE_PATH}/act_scales/gpt2-large.pt \
