@@ -15,7 +15,7 @@
         "weight_decay": 3e-7
       }
     },
-    
+
     "zero_optimization": {
       "stage": 0
     },
@@ -65,7 +65,7 @@
             "modules": [
               "attn.c_attn", "attn.c_proj"
             ]
-          }          
+          }
         }
       },
       "activation_quantization": {

@@ -272,15 +272,22 @@ def main():
         level=logging.INFO,
     )
 
-    device_name = f'cuda:{args.device}'
-
-    if args.local_rank == -1:
-        device = torch.device(device_name)
-    else:
-        torch.cuda.set_device(args.local_rank)
+    if hasattr(args, 'device') and args.device is not None:
+        # Single GPU case with specific device
+        device = torch.device(f'cuda:{args.device}')
+        torch.cuda.set_device(args.device)
+    elif args.local_rank != -1:
+        # Distributed case
         device = torch.device('cuda', args.local_rank)
-        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        # torch.distributed.init_process_group(backend='nccl')
+        torch.cuda.set_device(args.local_rank)
+    else:
+        # Default case
+        device = torch.device('cuda:0')
+
+    print(f'Setted device: {device}')
+
+    # Initialize distributed only if local_rank != -1
+    if args.local_rank != -1:
         deepspeed.init_distributed()
 
     def print_rank_0(msg):
@@ -468,7 +475,7 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
     else:
         args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
-        
+ 
     # Train!
     print_rank_0("***** Running training *****")
     print_rank_0(f"  Num examples = {len(train_dataset)}")
@@ -525,7 +532,7 @@ def main():
         ]
 
         # Set init optimizer params
-        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)    
+        optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
         lr_scheduler = get_scheduler(
                 name=args.lr_scheduler_type,
@@ -660,7 +667,15 @@ def main():
                     model_to_save = model.module if hasattr(model, 'module') else model
 
                     # Model weights dtype
-                    model_weights_dtype = model.weights
+                    try:
+                        if hasattr(model_to_save, 'dtype'):
+                            student_dtype = model_to_save.dtype
+                        else:
+                            # Fallback to checking the first parameter's dtype
+                            student_dtype = next(model_to_save.parameters()).dtype
+                        print_rank_0(f'Quantized student dtype: {student_dtype}')
+                    except Exception as e:
+                        print('WARNING: error occurs trying to get student model dtype')
 
                     # Count model parameters
                     total_params = sum(p.numel() for p in model_to_save.parameters())
@@ -698,7 +713,7 @@ def main():
     model = redundancy_clean(model, args.deepspeed_config)
     perplexity = evaluation(model, eval_dataloader)
     print_rank_0(f"After cleaning with Perplexity: {perplexity}")
-    
+
     quant_output_dir = args.output_dir+'/quant'
     print_rank_0(f'saving model to {quant_output_dir}')
     if not os.path.isdir(quant_output_dir):

@@ -14,17 +14,15 @@ mkdir -p ${SAVE_PATH}
 
 # Set gpt-based model
 MODEL=openai-community/gpt2-large
-DEVICE=0
-dataset_config_name=wikitext-103-raw-v1
+dataset_config_name=wikitext-2-raw-v1
 
 ######### fp16
 
 source /home/buka2004/PTQ-LLM-MIPT/.venv/bin/activate
 
-export CUDA_VISIBLE_DEVICES=1,3,7
+export CUDA_VISIBLE_DEVICES=1
 
 # Disturbed launch
-
 python -m torch.distributed.launch --nproc_per_node=1 \
     --master_port 12345 \
     -m DeepSpeedExamples.compression.gpt2.run_clm_lkd \
@@ -35,7 +33,7 @@ python -m torch.distributed.launch --nproc_per_node=1 \
     --num_train_epochs 5 \
     --deepspeed_config ${CONFIG} \
     --deepspeed \
-    --device ${DEVICE} \
+    --device 0 \
     --learning_rate 5e-6 \
     --next_reg_lam 0.1 \
     --weight_decay 0.0 \

@@ -2,7 +2,7 @@
     "train_batch_size" : 8,
     "train_micro_batch_size_per_gpu": 4,
     "steps_per_print": 50,
-    
+
     "optimizer": {
       "type": "Adam",
       "params": {
@@ -15,20 +15,20 @@
         "weight_decay": 3e-7
       }
     },
-    
+
     "zero_optimization": {
       "stage": 0
     },
-    
+
     "fp16":{
       "enabled": false
     },
-    
+
     "gradient_clipping": 1.0,
     "prescale_gradients": true,
-    
+
     "wall_clock_breakdown" : false,
-    
+
     "compression_training": {
       "weight_quantization": {
         "shared_parameters":{
@@ -38,7 +38,7 @@
           "quantize_groups": 64,
           "quantize_verbose": false,
           "quantization_type": "symmetric",
-          "quantize_weight_in_forward": true,
+          "quantize_weight_in_forward": false,
           "rounding": "nearest",
           "fp16_mixed_quantize":{
             "enabled": false,
