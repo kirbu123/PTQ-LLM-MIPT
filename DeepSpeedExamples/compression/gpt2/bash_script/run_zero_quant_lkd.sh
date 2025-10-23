@@ -1,8 +1,6 @@
 #!/bin/bash
 ##################fine-tune the origin model and then apply zeroquant, the following command will take approximately 10 mins in A100
-###zero-quant https://arxiv.org/abs/2206.01861
-
-# Set root path
+###zero-quant https://arxiv.org/abs/2206.0
 export PYTHONPATH="/home/buka2004/PTQ-LLM-MIPT:$PYTHONPATH"
 
 CONFIG=/home/buka2004/PTQ-LLM-MIPT/DeepSpeedExamples/compression/gpt2/config/ds_config_W8A8_Qgroup64_fp32.json
@@ -24,7 +22,7 @@ export CUDA_VISIBLE_DEVICES=1
 
 # Disturbed launch
 python -m torch.distributed.launch --nproc_per_node=1 \
-    --master_port 12345 \
+    --master_port 12346 \
     -m DeepSpeedExamples.compression.gpt2.run_clm_lkd \
     --dataset_name wikitext \
     --dataset_config_name ${dataset_config_name} \

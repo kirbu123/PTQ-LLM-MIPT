@@ -30,6 +30,7 @@ import os
 import random
 from pathlib import Path
 from re import L
+import copy
 
 import datasets
 import torch
@@ -49,8 +50,11 @@ from transformers import (
     SchedulerType,
     default_data_collator,
     get_scheduler,
-    set_seed,
+    set_seed
 )
+
+from notebooks.check_model_quant import log_model_quantization
+
 # from transformers.file_utils import get_full_repo_name
 from transformers.utils.versions import require_version
 
@@ -212,15 +216,22 @@ def parse_args():
     )
     parser.add_argument("--hub_token", type=str, help="The token to use to push to the Model Hub.")
     parser.add_argument("--data_folder", type=str, help="The token to use to push to the Model Hub.")
+    
     parser.add_argument("--local_rank",
                         type=int,
                         default=-1,
                         help="local_rank for distributed training on gpus")
+    parser.add_argument("--local-rank",
+                        type=int,
+                        default=-1,
+                        help="Alias for local_rank (for torch.distributed.launch compatibility)")
+
     parser.add_argument("--device",
                         type=int,
                         default=0,
                         help="gpu device for model ans tensors")
     parser.add_argument("--smooth", action="store_true")
+    parser.add_argument("--use_prev_quant_layer_input", action="store_true")
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument(
         "--smooth_dataset_path",
@@ -254,6 +265,30 @@ def parse_args():
         assert args.output_dir is not None, "Need an `output_dir` to create a repo when `--push_to_hub` is passed."
 
     return args
+
+
+def save_model_checkpoint(model, output_dir, args):
+    WEIGHTS_NAME = "pytorch_model.pt"
+    CONFIG_NAME = 'config.json'
+    output_dir = os.path.join(output_dir, 'best')    
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    output_model_file = os.path.join(output_dir, WEIGHTS_NAME)
+    output_config_file = os.path.join(output_dir, CONFIG_NAME)
+
+    ### get the model to be saved
+    model_to_save = model.module if hasattr(model, 'module') else model
+    model_will_save = copy.deepcopy(model_to_save)
+    torch.save(model_will_save.state_dict(), output_model_file)
+    model_to_save.config.to_json_file(output_config_file)
+
+    # Save args to text file
+    output_args_file = 'run_script.txt'
+    with open(output_args_file, 'w') as f:
+        for arg in vars(args):
+            f.write(f"{arg}: {getattr(args, arg)}\n")
+
 
 
 def main():
@@ -341,7 +376,6 @@ def main():
                 **dataset_args,
             )
 
-    
     if args.model_name_or_path is not None:
         config = AutoConfig.from_pretrained(args.model_name_or_path)
     else:
@@ -350,7 +384,6 @@ def main():
     #print (config)
     if args.not_tie_wre:
         config.tie_word_embeddings=False    
-
 
     if args.model_name_or_path is not None:
         tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, use_fast=not args.use_slow_tokenizer)
@@ -557,7 +590,7 @@ def main():
         )
         teacher_model.to(device)
         teacher_model.eval()
-        
+
         # Initialize teacher with deepspeed
         teacher_model, _, _, _ = deepspeed.initialize(
             model=teacher_model,
@@ -567,7 +600,7 @@ def main():
         # Initial evaluation
         perplexity = evaluation(model, eval_dataloader)
         print_rank_0(f"Initial student perplexity: {perplexity}")
-        
+
         teacher_perplexity = evaluation(teacher_model, eval_dataloader)
         print_rank_0(f"Teacher perplexity: {teacher_perplexity}")
 
@@ -581,6 +614,9 @@ def main():
                 os.makedirs(args.output_dir)
 
         best_perplexity = -1
+
+        # Set this tmp var
+        prev_student_layer = None
 
         for l in range(model.module.config.n_layer - 1):  # GPT-2 LKD crash after last layer (that is why n_layer - 1)
             print_rank_0(f"Training layer {l}")
@@ -623,8 +659,13 @@ def main():
 
                     # Extract layer inputs and outputs
                     layer_input = teacher_out.hidden_states[l]  # l-th layer input
-                    teacher_o = teacher_out.hidden_states[l + 1]  # l-th layer output
+                    teacher_o = teacher_out.hidden_states[l + 1]  # l+1-th layer output
 
+                    # Get previous student layer if config wants
+                    if prev_student_layer is not None:
+                        prev_teacher_o = teacher_out.hidden_states[l - 1] # l-1-th layer output
+                        layer_input = prev_student_layer(prev_teacher_o)[0]
+                    
                     # Get student layer output
                     student_o = student_layer(layer_input)[0]  # GPT-2 layer forward pass
 
@@ -664,29 +705,22 @@ def main():
                 best_perplexity = perplexity # Update best perplexity on train
                 print_rank_0(f'saving best quantized model after tuning on layer {l}...')
                 if torch.distributed.get_rank() == 0:
-                    model_to_save = model.module if hasattr(model, 'module') else model
 
-                    # Model weights dtype
-                    try:
-                        if hasattr(model_to_save, 'dtype'):
-                            student_dtype = model_to_save.dtype
-                        else:
-                            # Fallback to checking the first parameter's dtype
-                            student_dtype = next(model_to_save.parameters()).dtype
-                        print_rank_0(f'Quantized student dtype: {student_dtype}')
-                    except Exception as e:
-                        print('WARNING: error occurs trying to get student model dtype')
+                    model_to_save = redundancy_clean(model, args.deepspeed_config)
 
-                    # Count model parameters
-                    total_params = sum(p.numel() for p in model_to_save.parameters())
-                    trainable_params = sum(p.numel() for p in model_to_save.parameters() if p.requires_grad)
+                    # Log quantization part of model
+                    log_model_quantization(model)
 
-                    print_rank_0(f"Total parameters: {total_params:,}")
-                    print_rank_0(f"Trainable parameters: {trainable_params:,}")
-
-                    WEIGHTS_NAME = "quantized_model.pt"
+                    # Set constants
+                    WEIGHTS_NAME = "quantized_model"
                     output_model_file = os.path.join(args.output_dir, WEIGHTS_NAME)
-                    torch.save(model_to_save.state_dict(), output_model_file)
+
+                    # torch.save(model_to_save.state_dict(), output_model_file)
+                    # DeepSpeed saving tool
+                    # model.save_checkpoint(output_model_file)
+
+                    # Bert (from pypeline) saving tool
+                    save_model_checkpoint(model_to_save, output_model_file)
 
                     # Calculate checkpoint file size
                     checkpoint_size = os.path.getsize(output_model_file)  # Size in bytes
@@ -695,6 +729,9 @@ def main():
                     print_rank_0(f"Checkpoint file size: {checkpoint_size:,} bytes ({checkpoint_size_mb:.2f} MB / {checkpoint_size_gb:.2f} GB)")
 
                     tokenizer.save_vocabulary(args.output_dir)
+            
+            if args.use_prev_quant_layer_input:
+                prev_student_layer = student_layer
 
         # Evaluate after LKD
         print_rank_0(f"***** Evaluating perplexity, Epoch {args.num_train_epochs}/{num_train_epochs} *****")

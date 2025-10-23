@@ -26,9 +26,9 @@
     
     "gradient_clipping": 1.0,
     "prescale_gradients": true,
-    
+
     "wall_clock_breakdown" : false,
-    
+
     "compression_training": {
       "weight_quantization": {
         "shared_parameters":{
