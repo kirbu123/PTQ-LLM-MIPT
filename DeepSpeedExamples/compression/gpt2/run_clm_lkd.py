@@ -720,7 +720,7 @@ def main():
                     # model.save_checkpoint(output_model_file)
 
                     # Bert (from pypeline) saving tool
-                    save_model_checkpoint(model_to_save, output_model_file)
+                    save_model_checkpoint(model_to_save, output_model_file, args)
 
                     # Calculate checkpoint file size
                     checkpoint_size = os.path.getsize(output_model_file)  # Size in bytes
