@@ -157,7 +157,7 @@ def log_model_quantization(model):
 
 
 if __name__ == "__main__":
-    model_path = "/home/buka2004/PTQ-LLM-MIPT/W8A8_quantization_lkd_saving/best/pytorch_model.bin"
+    model_path = "/home/buka2004/PTQ-LLM-MIPT/DeepSpeedExamples/compression/gpt2/out/ZeroQuant/W8A8_quantization_lkd/quantized_model/best/pytorch_model.pt"
     model_name = "openai-community/gpt2-large"
     ds_config  = "/home/buka2004/PTQ-LLM-MIPT/DeepSpeedExamples/compression/gpt2/config/ds_config_W8A8_Qgroup64_fp32.json"
 

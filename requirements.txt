@@ -22,4 +22,4 @@ deepspeed
 jupyter
 ipykernel
 tensorboard
-llmcompressor
+# llmcompressor

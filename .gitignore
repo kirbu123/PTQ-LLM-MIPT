@@ -145,6 +145,8 @@ scripts/
 int8_models/
 logs/
 *.pt
+*.pth
+*.safetensors
 *.bin
 slurm_log/
 

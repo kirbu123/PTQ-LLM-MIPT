@@ -57,7 +57,8 @@
             "transformer.h.*.attn.c_proj",
             "transformer.h.*.mlp.c_fc",
             "transformer.h.*.mlp.c_proj",
-            "lm_head"
+            "transformer.wte",
+            "transformer.wpe"
           ]
         }      
       }
@@ -78,8 +79,7 @@
             "transformer.h.*.attn.c_attn",
             "transformer.h.*.attn.c_proj",
             "transformer.h.*.mlp.c_fc",
-            "transformer.h.*.mlp.c_proj",
-            "lm_head"
+            "transformer.h.*.mlp.c_proj"
           ]
         }
       }

@@ -1,0 +1,77 @@
+{
+  "_remove_final_layer_norm": false,
+  "activation_dropout": 0.0,
+  "activation_function": "relu",
+  "architectures": [
+    "OPTForCausalLM"
+  ],
+  "attention_dropout": 0.0,
+  "bos_token_id": 2,
+  "do_layer_norm_before": false,
+  "dropout": 0.1,
+  "dtype": "float32",
+  "enable_bias": true,
+  "eos_token_id": 2,
+  "ffn_dim": 4096,
+  "hidden_size": 1024,
+  "init_std": 0.02,
+  "layer_norm_elementwise_affine": true,
+  "layerdrop": 0.0,
+  "max_position_embeddings": 2048,
+  "model_type": "opt",
+  "num_attention_heads": 16,
+  "num_hidden_layers": 24,
+  "pad_token_id": 1,
+  "prefix": "</s>",
+  "quantization_config": {
+    "config_groups": {
+      "group_0": {
+        "format": "int-quantized",
+        "input_activations": {
+          "actorder": null,
+          "block_structure": null,
+          "dynamic": true,
+          "group_size": null,
+          "num_bits": 8,
+          "observer": null,
+          "observer_kwargs": {},
+          "strategy": "token",
+          "symmetric": true,
+          "type": "int"
+        },
+        "output_activations": null,
+        "targets": [
+          "Linear"
+        ],
+        "weights": {
+          "actorder": null,
+          "block_structure": null,
+          "dynamic": false,
+          "group_size": null,
+          "num_bits": 8,
+          "observer": "minmax",
+          "observer_kwargs": {},
+          "strategy": "channel",
+          "symmetric": true,
+          "type": "int"
+        }
+      }
+    },
+    "format": "int-quantized",
+    "global_compression_ratio": null,
+    "ignore": [
+      "lm_head"
+    ],
+    "kv_cache_scheme": null,
+    "quant_method": "compressed-tensors",
+    "quantization_status": "compressed",
+    "sparsity_config": {},
+    "transform_config": {},
+    "version": "0.12.3.a20251030"
+  },
+  "tie_word_embeddings": false,
+  "transformers_version": "4.57.1",
+  "use_cache": true,
+  "vocab_size": 50272,
+  "word_embed_proj_dim": 512
+}
