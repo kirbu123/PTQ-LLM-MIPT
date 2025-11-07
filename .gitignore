@@ -131,6 +131,9 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+# Debug dir
+.vscode
+
 # PyCharm
 .idea/
 
