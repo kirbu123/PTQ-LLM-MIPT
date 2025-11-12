@@ -247,7 +247,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         """
         Quantize modules which have been calibrated
         """
-        for i, module in enumerate(list(self._num_samples.keys())):
+        for module in list(self._num_samples.keys()):
             name = self._module_names[module]
             num_samples = self._num_samples[module]
             quant_args = getattr_chain(module, "quantization_scheme.weights")
