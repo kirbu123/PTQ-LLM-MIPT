@@ -74,6 +74,8 @@ def quantize_weight(
     hessians_dict: dict[torch.nn.Module, torch.Tensor],
     blocksize: int = 128,
     percdamp: float = 0.01,
+    module_next: torch.nn.Module | None = None,
+    next_reg_lam: float = 0.
 ) -> tuple[float, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]:
     """
     Quantize a module weight according to the GPTQ algorithm
@@ -90,7 +92,17 @@ def quantize_weight(
     final_shape = module.weight.shape
     final_dtype = module.weight.dtype
     W = module.weight.clone()
+    # Caclulate Hessian
     H = hessians_dict[module]  # unfortunately python does not have a `move` keyword
+    if module_next is not None and next_reg_lam > 0:
+        H_next = hessians_dict[module_next]
+        try:
+            print('SAME H SHAPES')
+            H += H_next * next_reg_lam
+        except RuntimeError:
+            print('NOT SAME H SHAPES')
+            pass
+
     del hessians_dict[module]  # so we have to delete the original reference manually
 
     # create observer for calculating quantization parameters

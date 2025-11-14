@@ -57,7 +57,7 @@ if __name__ == "__main__":
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    output_dir = f'/home/buka2004/PTQ-LLM-MIPT/vllm_out/{model_name}/{dataset_name}'
+    output_dir = f'/home/buka2004/PTQ-LLM-MIPT/vllm_out/{model_name}_v2/{dataset_name}'
 
     oneshot(
         model=model,

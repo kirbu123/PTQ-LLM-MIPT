@@ -247,7 +247,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         """
         Quantize modules which have been calibrated
         """
-        for module in list(self._num_samples.keys()):
+        for i, module in enumerate(list(self._num_samples.keys())):
             name = self._module_names[module]
             num_samples = self._num_samples[module]
             quant_args = getattr_chain(module, "quantization_scheme.weights")
@@ -258,12 +258,17 @@ class GPTQModifier(Modifier, QuantizationMixin):
             ), self._maybe_onload_hessian(module), CompressionLogger(
                 module
             ) as comp_logger:
+                module_next = None
+                if i < len(list(self._num_samples.keys())) - 1:
+                    module_next = list(self._num_samples.keys())[i+1]
                 loss, quantized_weight, scale, zero_point, g_idx = quantize_weight(
                     module=module,
                     quant_args=quant_args,
                     hessians_dict=self._hessians,
                     blocksize=self.block_size,
                     percdamp=self.dampening_frac,
+                    module_next=module_next,
+                    next_reg_lam=0.2
                 )
                 comp_logger.set_loss(loss)
 
