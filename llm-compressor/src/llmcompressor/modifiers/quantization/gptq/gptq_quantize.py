@@ -68,6 +68,7 @@ def accumulate_hessian(
     return H, num_samples
 
 
+
 def quantize_weight(
     module: torch.nn.Module,
     quant_args: QuantizationArgs,

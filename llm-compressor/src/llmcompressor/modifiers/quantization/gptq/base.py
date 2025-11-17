@@ -104,6 +104,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
         There is an explicit assumption that the model contains modules with
         `k_proj` and `v_proj` in their names. If this is not the case
         and kv_cache_scheme != None, the quantization of kv cache will fail
+    :param next_reg_lam: regularization parameter for next layer influence during
+        quantization. Defaults to 0.0.
     """
 
     # gptq modifier arguments
@@ -113,6 +115,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     # TODO: this does not serialize / will be incorrectly written
     actorder: Optional[Union[ActivationOrdering, Sentinel]] = Sentinel("static")
     offload_hessians: bool = False
+    next_reg_lam: float = 0.0  # New parameter
 
     # private variables
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
@@ -268,7 +271,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     blocksize=self.block_size,
                     percdamp=self.dampening_frac,
                     module_next=module_next,
-                    next_reg_lam=0.2
+                    next_reg_lam=self.next_reg_lam
                 )
                 comp_logger.set_loss(loss)
 

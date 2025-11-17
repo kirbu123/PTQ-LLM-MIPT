@@ -35,9 +35,11 @@
           "num_bits": 8,
           "observer": null,
           "observer_kwargs": {},
+          "scale_dtype": null,
           "strategy": "token",
           "symmetric": true,
-          "type": "int"
+          "type": "int",
+          "zp_dtype": null
         },
         "output_activations": null,
         "targets": [
@@ -51,9 +53,11 @@
           "num_bits": 8,
           "observer": "minmax",
           "observer_kwargs": {},
+          "scale_dtype": null,
           "strategy": "channel",
           "symmetric": true,
-          "type": "int"
+          "type": "int",
+          "zp_dtype": null
         }
       }
     },
@@ -67,9 +71,8 @@
     "quantization_status": "compressed",
     "sparsity_config": {},
     "transform_config": {},
-    "version": "0.12.3.a20251030"
+    "version": "0.12.3.a20251114"
   },
-  "tie_word_embeddings": false,
   "transformers_version": "4.57.1",
   "use_cache": true,
   "vocab_size": 50272,

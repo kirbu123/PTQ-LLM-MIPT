@@ -8,3 +8,4 @@ default_stage:
       dampening_frac: 0.01
       actorder: static
       offload_hessians: false
+      next_reg_lam: 0.0
