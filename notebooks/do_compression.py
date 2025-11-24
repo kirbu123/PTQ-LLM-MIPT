@@ -1,6 +1,7 @@
 import argparse
 import os
 from llmcompressor.modifiers.quantization import GPTQModifier
+from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from llmcompressor import oneshot
@@ -8,27 +9,61 @@ from transformers.pytorch_utils import Conv1D
 from transformers import set_seed
 import subprocess
 from deepspeed.compression.helper import convert_conv1d_to_linear
+import torch
 
+BYTES_PRECISION_DICT = {
+    torch.float32: 4,
+    torch.float16: 2,
+    torch.int32: 4,
+    torch.int16: 2,
+    torch.int8: 1
+}
 
-def evaluate_with_lm_eval(model_path, tasks="wikitext", num_fewshot=0, limit=500, device="cuda:0"):
+def estimate_model_params(model):
+    """Estimate model memory usage based on parameters and precision"""
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_byte_params = sum(p.numel() * BYTES_PRECISION_DICT[p.dtype] for p in model.parameters())
+
+    # Calculate memory based on precision
+    model_memory_gb = total_byte_params / (1024**3)
+    
+    # For inference, we typically need model weights + some overhead
+    inference_memory_gb = model_memory_gb * 1.2  # 20% overhead for activations
+
+    param_info = {
+        'total_params': total_params,
+        'trainable_params': trainable_params,
+        'model_memory_gb': model_memory_gb,
+        'inference_memory_gb': inference_memory_gb
+    }
+    
+    return param_info
+
+def evaluate_with_lm_eval(model_path, teacher_model, student_model, tasks="wikitext", num_fewshot=0, limit=500, device="cuda:0"):
     """
     Evaluate model using lm-evaluation-harness and save results to evaluation.txt
-    
+
     Args:
         model_path: Path to the model
         tasks: Comma-separated tasks
         num_fewshot: Number of few-shot examples
         limit: Number of examples to evaluate
         device: CUDA device to use
-    
+
     Returns:
         bool: Success status
     """
-    
+
+    # Log teacher model params
+
+    teacher_param_info = estimate_model_params(teacher_model)
+    compressed_param_info = estimate_model_params(student_model)
+
     # Set CUDA device
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = device.split(":")[-1] if ":" in device else "0"
-    
+
     # Build the command
     cmd = [
         "lm_eval",
@@ -37,20 +72,49 @@ def evaluate_with_lm_eval(model_path, tasks="wikitext", num_fewshot=0, limit=500
         "--tasks", tasks,
         "--num_fewshot", str(num_fewshot),
         "--limit", str(limit),
-        "--batch_size", "1"
+        "--batch_size", "1",
+        "--output_path",  f"{model_path}"
     ]
-    
+
     print(f"Running lm_eval with command:")
     print(" ".join(cmd))
     print(f"Using device: {device}")
-    
+
     try:
         # Run the command
         result = subprocess.run(cmd, env=env, capture_output=True, text=True)
         
         # Save results to file
-        eval_file = os.path.join(model_path, "evaluation.txt")
+        eval_file = os.path.join(model_path, "evaluation_log.txt")
         with open(eval_file, "w") as f:
+            f.write("MODELS SIZE RESULTS\n")
+            f.write("=" * 50 + "\n")
+            
+            # Teacher model parameters
+            f.write("TEACHER MODEL:\n")
+            f.write(f"  Total parameters: {teacher_param_info['total_params']:,}\n")
+            f.write(f"  Trainable parameters: {teacher_param_info['trainable_params']:,}\n")
+            f.write(f"  Model memory: {teacher_param_info['model_memory_gb']:.2f} GB\n")
+            f.write(f"  Estimated inference memory: {teacher_param_info['inference_memory_gb']:.2f} GB\n")
+            f.write("\n")
+            
+            # Student (compressed) model parameters
+            f.write("STUDENT MODEL (COMPRESSED):\n")
+            f.write(f"  Total parameters: {compressed_param_info['total_params']:,}\n")
+            f.write(f"  Trainable parameters: {compressed_param_info['trainable_params']:,}\n")
+            f.write(f"  Model memory: {compressed_param_info['model_memory_gb']:.2f} GB\n")
+            f.write(f"  Estimated inference memory: {compressed_param_info['inference_memory_gb']:.2f} GB\n")
+            f.write("\n")
+            
+            # Compression ratio
+            compression_ratio = teacher_param_info['model_memory_gb'] / compressed_param_info['model_memory_gb']
+            memory_reduction = (1 - compressed_param_info['model_memory_gb'] / teacher_param_info['model_memory_gb']) * 100
+            f.write("COMPRESSION RESULTS:\n")
+            f.write(f"  Compression ratio: {compression_ratio:.2f}x\n")
+            f.write(f"  Memory reduction: {memory_reduction:.2f}%\n")
+
+            f.write("=" * 50 + "\n\n")
+
             f.write("LM-EVAL EVALUATION RESULTS\n")
             f.write("=" * 50 + "\n")
             f.write(f"Model: {model_path}\n")
@@ -59,29 +123,29 @@ def evaluate_with_lm_eval(model_path, tasks="wikitext", num_fewshot=0, limit=500
             f.write(f"Limit: {limit}\n")
             f.write(f"Device: {device}\n")
             f.write("=" * 50 + "\n\n")
-            
+
             if result.stdout:
                 f.write("STDOUT:\n")
                 f.write(result.stdout)
                 f.write("\n")
-            
+
             if result.stderr:
                 f.write("STDERR:\n")
                 f.write(result.stderr)
                 f.write("\n")
-            
+
             f.write(f"\nReturn code: {result.returncode}\n")
-        
+
         print(f"✓ Evaluation results saved to: {eval_file}")
-        
+
         # Also print results to console
         if result.stdout:
             print("\nEVALUATION RESULTS:")
             print("=" * 50)
             print(result.stdout)
-        
+
         return result.returncode == 0
-        
+
     except Exception as e:
         print(f"Error running lm_eval: {e}")
         return False
@@ -92,7 +156,7 @@ def quantize_model_by_oneshot(
         max_seq_length=1024, num_calibration_samples=512):
 
     recipe = [
-        # SmoothQuantModifier(smoothing_strength=0.8),
+        SmoothQuantModifier(smoothing_strength=0.8),
         GPTQModifier(scheme=scheme, targets=targets, ignore=ignore, next_reg_lam=next_reg_lam),
     ]
 
@@ -121,7 +185,7 @@ def quantize_model_by_oneshot(
         num_calibration_samples=num_calibration_samples,
     )
 
-    return oneshot_model, output_dir, dataset, tokenizer
+    return oneshot_model, model, output_dir, dataset, tokenizer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Quantize a model using GPTQ oneshot compression')
@@ -168,7 +232,7 @@ if __name__ == "__main__":
 
     set_seed(args.seed)
 
-    oneshot_model, model_output_path, dataset, tokenizer = quantize_model_by_oneshot(
+    oneshot_model, teacher_model, model_output_path, dataset, tokenizer = quantize_model_by_oneshot(
         model_name=args.model_name,
         dataset_name=args.dataset_name,
         dataset_subset=args.dataset_subset,
@@ -188,6 +252,8 @@ if __name__ == "__main__":
     
     success = evaluate_with_lm_eval(
         model_path=model_output_path,
+        teacher_model=teacher_model,
+        student_model=oneshot_model,
         tasks="wikitext",
         num_fewshot=0,
         limit=500,

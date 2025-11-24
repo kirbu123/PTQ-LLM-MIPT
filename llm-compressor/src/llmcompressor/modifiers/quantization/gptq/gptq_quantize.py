@@ -95,14 +95,14 @@ def quantize_weight(
     W = module.weight.clone()
     # Caclulate Hessian
     H = hessians_dict[module]  # unfortunately python does not have a `move` keyword
-    if module_next is not None and next_reg_lam > 0:
+    if module_next is not None:
         H_next = hessians_dict[module_next]
         try:
-            print('SAME H SHAPES')
             H += H_next * next_reg_lam
         except RuntimeError:
-            print('NOT SAME H SHAPES')
             pass
+
+    # H = torch.zeros_like(H, dtype=H.dtype) # used for debug H usage
 
     del hessians_dict[module]  # so we have to delete the original reference manually
 
