@@ -11,15 +11,13 @@
 # ipykernel
 # tensorboard
 
-torch
-torchvision
-torchaudio
-transformers
-accelerate
-datasets
-zstandard
-deepspeed
+# basic libs
 jupyter
 ipykernel
 tensorboard
-# llmcompressor
+deepspeed
+
+# llm-compressor
+lm-eval
+transformers
+accelerate

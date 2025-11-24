@@ -40,7 +40,11 @@ def estimate_model_params(model):
     
     return param_info
 
-def evaluate_with_lm_eval(model_path, teacher_model, student_model, tasks="wikitext", num_fewshot=0, limit=500, device="cuda:0"):
+def evaluate_with_lm_eval(
+        model_path, model_name, teacher_model, student_model, tasks="wikitext",
+        num_fewshot=0, limit=500, device="cuda:0",
+        eval_log_name='evaluation_logs', eval_res_name='evaluation_results'
+    ):
     """
     Evaluate model using lm-evaluation-harness and save results to evaluation.txt
 
@@ -55,6 +59,10 @@ def evaluate_with_lm_eval(model_path, teacher_model, student_model, tasks="wikit
         bool: Success status
     """
 
+    print("\n" + "="*50)
+    print("Starting lm_eval evaluation")
+    print("="*50)
+
     # Log teacher model params
 
     teacher_param_info = estimate_model_params(teacher_model)
@@ -64,8 +72,17 @@ def evaluate_with_lm_eval(model_path, teacher_model, student_model, tasks="wikit
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = device.split(":")[-1] if ":" in device else "0"
 
-    # Build the command
-    cmd = [
+    cmd_teacher = [
+        "lm_eval",
+        "--model", "hf",
+        "--model_args", f"pretrained={model_name}",
+        "--tasks", tasks,
+        "--num_fewshot", str(num_fewshot),
+        "--limit", str(limit),
+        "--batch_size", "1",
+    ]
+
+    cmd_student = [
         "lm_eval",
         "--model", "hf",
         "--model_args", f"pretrained={model_path}",
@@ -76,17 +93,23 @@ def evaluate_with_lm_eval(model_path, teacher_model, student_model, tasks="wikit
         "--output_path",  f"{model_path}"
     ]
 
-    print(f"Running lm_eval with command:")
-    print(" ".join(cmd))
+    print(f"Running lm_eval with commands:")
+    print("TEACHER:")
+    print(" ".join(cmd_teacher))
+    print("STUDENT:")
+    print(" ".join(cmd_student))
     print(f"Using device: {device}")
 
     try:
         # Run the command
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        result_teacher = subprocess.run(cmd_teacher, env=env, capture_output=True, text=True)
+        result_student = subprocess.run(cmd_student, env=env, capture_output=True, text=True)
         
         # Save results to file
-        eval_file = os.path.join(model_path, "evaluation_log.txt")
-        with open(eval_file, "w") as f:
+        eval_log_file = os.path.join(model_path, f"{eval_log_name}.log")
+        eval_res_file = os.path.join(model_path, f"{eval_res_name}.txt")
+
+        with open(eval_res_file, "w") as f:
             f.write("MODELS SIZE RESULTS\n")
             f.write("=" * 50 + "\n")
             
@@ -117,48 +140,82 @@ def evaluate_with_lm_eval(model_path, teacher_model, student_model, tasks="wikit
 
             f.write("LM-EVAL EVALUATION RESULTS\n")
             f.write("=" * 50 + "\n")
-            f.write(f"Model: {model_path}\n")
+            f.write(f"Model name: {model_name}\n")
+            f.write(f"Model path: {model_path}\n")
             f.write(f"Tasks: {tasks}\n")
             f.write(f"Few-shot: {num_fewshot}\n")
             f.write(f"Limit: {limit}\n")
             f.write(f"Device: {device}\n")
             f.write("=" * 50 + "\n\n")
 
-            if result.stdout:
-                f.write("STDOUT:\n")
-                f.write(result.stdout)
+            if result_teacher.stdout:
+                f.write("TEACHER EVALUATION RESULTS:\n")
+                f.write(result_teacher.stdout)
                 f.write("\n")
 
-            if result.stderr:
-                f.write("STDERR:\n")
-                f.write(result.stderr)
+            f.write("=" * 50 + "\n")
+
+            if result_student.stdout:
+                f.write("STUDENT EVALUATION RESULTS:\n")
+                f.write(result_student.stdout)
+                f.write("\n")
+            
+            f.write("=" * 50 + "\n")
+
+        with open(eval_log_file, "w") as f:
+            f.write("=" * 50 + "\n")
+
+            if result_teacher.stderr:
+                f.write("TEACHER STDERR:\n")
+                f.write(result_teacher.stderr)
                 f.write("\n")
 
-            f.write(f"\nReturn code: {result.returncode}\n")
+            f.write(f"\nReturn code: {result_teacher.returncode}\n")
 
-        print(f"✓ Evaluation results saved to: {eval_file}")
+            f.write("=" * 50 + "\n")
+
+            if result_student.stderr:
+                f.write("STUDENT STDERR:\n")
+                f.write(result_student.stderr)
+                f.write("\n")
+
+            f.write(f"\nReturn code: {result_student.returncode}\n")
+
+            f.write("=" * 50 + "\n")
+
+        print(f"✓ Evaluation results saved to: {eval_log_file} and {eval_res_file}")
 
         # Also print results to console
-        if result.stdout:
-            print("\nEVALUATION RESULTS:")
+        if result_teacher.stdout:
+            print("\nTEACHER EVALUATION RESULTS:")
             print("=" * 50)
-            print(result.stdout)
+            print(result_teacher.stdout)
 
-        return result.returncode == 0
+        if result_student.stdout:
+            print("\nSTUDENT EVALUATION RESULTS:")
+            print("=" * 50)
+            print(result_student.stdout)
+
+
+        return result_teacher.returncode == 0 and result_student.returncode
 
     except Exception as e:
         print(f"Error running lm_eval: {e}")
         return False
 
+
 def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0.,
-        max_seq_length=1024, num_calibration_samples=512):
+        max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
+        gptq=True, smoothquant=True
+    ):
 
-    recipe = [
-        SmoothQuantModifier(smoothing_strength=0.8),
-        GPTQModifier(scheme=scheme, targets=targets, ignore=ignore, next_reg_lam=next_reg_lam),
-    ]
+    recipe = []
+    if smoothquant:
+        recipe = recipe + [SmoothQuantModifier(smoothing_strength=smoothing_strength)]
+    if gptq:
+        recipe = recipe + [GPTQModifier(scheme=scheme, targets=targets, ignore=ignore, next_reg_lam=next_reg_lam)]
 
     # Set variables using 
     model = AutoModelForCausalLM.from_pretrained(
@@ -185,7 +242,7 @@ def quantize_model_by_oneshot(
         num_calibration_samples=num_calibration_samples,
     )
 
-    return oneshot_model, model, output_dir, dataset, tokenizer
+    return oneshot_model, model, model_name, output_dir, dataset, tokenizer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Quantize a model using GPTQ oneshot compression')
@@ -203,8 +260,10 @@ def parse_args():
                        help='Dataset subset for calibration')
     parser.add_argument('--output_dir', type=str, 
                        help='Output directory for quantized model (optional)')
-    
+
     # GPTQ parameters
+    parser.add_argument('--gptq', action='store_true',
+                   help='Enable GPTQ quantization')
     parser.add_argument('--scheme', type=str, default='W8A8',
                        choices=['W8A8', 'W4A8', 'W4A16', 'W2A16'],
                        help='Quantization scheme')
@@ -218,11 +277,16 @@ def parse_args():
                        help='Number of calibration samples')
     parser.add_argument('--max_seq_length', type=int, default=1024,
                        help='Maximum sequence length')
-    
+
+    # SmoothQuant
+    parser.add_argument('--smoothquant', action='store_true',
+                   help='Enable SmoothQuant quantization')
+    parser.add_argument('--smoothing_strength', type=float, default=0.5,
+                       help='Regularization alpha parameter for smoothquant method')
+
     # Other parameters
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
-    
 
     return parser.parse_args()
 
@@ -232,7 +296,8 @@ if __name__ == "__main__":
 
     set_seed(args.seed)
 
-    oneshot_model, teacher_model, model_output_path, dataset, tokenizer = quantize_model_by_oneshot(
+    # Run llm-compressor quantization
+    oneshot_model, teacher_model, model_name, model_output_path, dataset, tokenizer = quantize_model_by_oneshot(
         model_name=args.model_name,
         dataset_name=args.dataset_name,
         dataset_subset=args.dataset_subset,
@@ -243,15 +308,15 @@ if __name__ == "__main__":
         next_reg_lam=args.next_reg_lam,
         num_calibration_samples=args.num_calibration_samples,
         max_seq_length=args.max_seq_length,
+        gptq=args.gptq,
+        smoothquant=args.smoothquant,
+        smoothing_strength=args.smoothing_strength
     )
 
     # Run lm_eval evaluation
-    print("\n" + "="*50)
-    print("Starting lm_eval evaluation")
-    print("="*50)
-    
     success = evaluate_with_lm_eval(
         model_path=model_output_path,
+        model_name=model_name,
         teacher_model=teacher_model,
         student_model=oneshot_model,
         tasks="wikitext",
