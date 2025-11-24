@@ -158,3 +158,6 @@ slurm_log/
 
 # Tensorboard
 tensorboard/
+
+# Checkpoints
+quant_checkpoints/

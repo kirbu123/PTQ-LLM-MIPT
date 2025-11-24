@@ -197,7 +197,7 @@ def evaluate_with_lm_eval(
             print(result_student.stdout)
 
 
-        return result_teacher.returncode == 0 and result_student.returncode
+        return result_teacher.returncode == 0 and result_student.returncode == 0
 
     except Exception as e:
         print(f"Error running lm_eval: {e}")
