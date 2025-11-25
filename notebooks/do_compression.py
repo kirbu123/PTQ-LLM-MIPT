@@ -1,7 +1,7 @@
 import argparse
 import os
 from llmcompressor.modifiers.quantization import GPTQModifier
-from llmcompressor.modifiers.smoothquant import SmoothQuantModifier
+from llmcompressor.modifiers.smoothquant import SmoothQuantModifier, SmoothQuantRegModifier
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from llmcompressor import oneshot
@@ -208,12 +208,17 @@ def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0.,
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
-        gptq=True, smoothquant=True
+        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True
     ):
+
+    if smoothquant and smoothquantreg:
+        ValueError('Evailable to use only one smooth method, picked two')
 
     recipe = []
     if smoothquant:
         recipe = recipe + [SmoothQuantModifier(smoothing_strength=smoothing_strength)]
+    if smoothquantreg:
+        recipe = recipe + [SmoothQuantRegModifier(smoothing_strength=smoothing_strength, hes_reg_lam=hes_reg_lam)]
     if gptq:
         recipe = recipe + [GPTQModifier(scheme=scheme, targets=targets, ignore=ignore, next_reg_lam=next_reg_lam)]
 
@@ -278,11 +283,15 @@ def parse_args():
     parser.add_argument('--max_seq_length', type=int, default=1024,
                        help='Maximum sequence length')
 
-    # SmoothQuant
+    # SmoothQuant && SmoothQuantReg
+    parser.add_argument('--smoothquantreg', action='store_true',
+                   help='Enable SmoothQuant quantization')
     parser.add_argument('--smoothquant', action='store_true',
                    help='Enable SmoothQuant quantization')
     parser.add_argument('--smoothing_strength', type=float, default=0.5,
                        help='Regularization alpha parameter for smoothquant method')
+    parser.add_argument('--hes_reg_lam', type=float, default=0.1,
+                       help='Regularization lam parameter for smoothquant weight hesian reg')
 
     # Other parameters
     parser.add_argument('--seed', type=int, default=42,
@@ -310,6 +319,8 @@ if __name__ == "__main__":
         max_seq_length=args.max_seq_length,
         gptq=args.gptq,
         smoothquant=args.smoothquant,
+        smoothquantreg=args.smoothquantreg,
+        hes_reg_lam=args.hes_reg_lam,
         smoothing_strength=args.smoothing_strength
     )
 
