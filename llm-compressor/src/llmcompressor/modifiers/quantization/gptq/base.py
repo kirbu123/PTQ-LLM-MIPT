@@ -253,6 +253,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         Quantize modules which have been calibrated
         """
         keys_list = list(self._num_samples.keys())
+
         for i, module in enumerate(list(self._num_samples.keys())):
             name = self._module_names[module]
             num_samples = self._num_samples[module]
@@ -265,6 +266,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 module
             ) as comp_logger:
                 module_next = next(islice(keys_list, i+1, i+2), None)
+
                 loss, quantized_weight, scale, zero_point, g_idx = quantize_weight(
                     module=module,
                     quant_args=quant_args,

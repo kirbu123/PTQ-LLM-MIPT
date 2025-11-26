@@ -95,10 +95,10 @@ def quantize_weight(
     W = module.weight.clone()
     # Caclulate Hessian
     H = hessians_dict[module]  # unfortunately python does not have a `move` keyword
-    if module_next is not None:
+    if module_next is not None and next_reg_lam != 0:
         H_next = hessians_dict[module_next]
         try:
-            H += H_next * next_reg_lam
+            H = H + next_reg_lam * H_next
         except RuntimeError:
             pass
 

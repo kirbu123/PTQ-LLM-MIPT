@@ -29,7 +29,7 @@ pip install -e ./llm-compressor --upgrade -r requirements.txt
 ### Usage example
 
 ```bash
-python notebooks/do_compression.py \
+python lauchers/do_compression.py \
                     --device cuda \
                     --model_name "TinyLlama/TinyLlama-1.1B-Chat-v1.0" \
                     --dataset_name "wikitext" \
