@@ -144,8 +144,6 @@ def accumulate_hessian_next_reg(
     # Update Hessian with combined input
     # H[:inp_all.shape[0], :inp_all.shape[1]] += inp_all.matmul(inp_all.t())
 
-    print(inp_all.shape, H.shape, inp.shape)
-
     H += inp_all.matmul(inp_all.t())
 
     return H, num_samples
