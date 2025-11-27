@@ -24,6 +24,7 @@ from llmcompressor.core import Event, EventType, State
 from llmcompressor.modifiers import Modifier
 from llmcompressor.modifiers.quantization.gptq.gptq_quantize import (
     accumulate_hessian,
+    accumulate_hessian_next_reg,
     make_empty_hessian,
     quantize_weight,
 )
@@ -118,6 +119,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     actorder: Optional[Union[ActivationOrdering, Sentinel]] = Sentinel("static")
     offload_hessians: bool = False
     next_reg_lam: float = 0.0  # New parameter
+    next_loss_lam: float = 0.0  # New parameter
 
     # private variables
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
@@ -214,11 +216,40 @@ class GPTQModifier(Modifier, QuantizationMixin):
             if not self.ended_:
                 self.on_end(state, None)
 
+    def _get_next_module(self, current_module: torch.nn.Module) -> Optional[torch.nn.Module]:
+        """
+        Find the next module in the sequential order of targets
+        
+        :param current_module: current module to find next for
+        :return: next module in sequence or None if not found
+        """
+        if current_module not in self._module_names:
+            return None
+        
+        current_name = self._module_names[current_module]
+        
+        # Get all module names in order
+        all_modules = list(self._module_names.items())
+        
+        # Find current module index
+        current_idx = -1
+        for idx, (mod, name) in enumerate(all_modules):
+            if mod == current_module:
+                current_idx = idx
+                break
+        
+        if current_idx == -1 or current_idx + 1 >= len(all_modules):
+            return None
+        
+        # Return next module
+        next_module, next_name = all_modules[current_idx + 1]
+        return next_module
+
     def calibrate_module(
         self,
         module: torch.nn.Module,
         args: Tuple[torch.Tensor, ...],
-        _output: torch.Tensor,
+        output: torch.Tensor,
     ):
         """
         Calibration hook used to accumulate the hessian of the input to the module
@@ -226,7 +257,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         :param module: module being calibrated
         :param args: inputs to the module, the first element of which is the
             cannonical input
-        :param _output: uncompressed module output, unused
+        :param output: uncompressed module output, unused
         """
         # Assume that first argument is the input
         inp = args[0]
@@ -239,14 +270,35 @@ class GPTQModifier(Modifier, QuantizationMixin):
             self._hessians[module] = make_empty_hessian(module, device=init_device)
             self._num_samples[module] = 0
 
+        # Get next module and its input (current module's output)
+        module_next = None
+        inp_next = None
+        
+        if self.next_loss_lam != 0.:
+            # Find the next module in the sequential targets
+            module_next = self._get_next_module(module)
+            if module_next is not None:
+                inp_next = output  # Use current module's output as next module's input
+
         # Accumulate hessian with input with optional offloading
         with self._maybe_onload_hessian(module):
-            self._hessians[module], self._num_samples[module] = accumulate_hessian(
-                inp,
-                module,
-                self._hessians[module],
-                self._num_samples[module],
-            )
+            if self.next_loss_lam == 0.:
+                self._hessians[module], self._num_samples[module] = accumulate_hessian(
+                    inp,
+                    module,
+                    self._hessians[module],
+                    self._num_samples[module],
+                )
+            else:
+                self._hessians[module], self._num_samples[module] = accumulate_hessian_next_reg(
+                    inp,
+                    inp_next,
+                    module,
+                    module_next,
+                    self._hessians[module],
+                    self._num_samples[module],
+                    self.next_loss_lam
+                ) 
 
     def compress_modules(self):
         """
