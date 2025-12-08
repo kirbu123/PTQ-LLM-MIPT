@@ -68,6 +68,90 @@ def accumulate_hessian(
 
     return H, num_samples
 
+
+# def accumulate_hessian_next_reg(
+#     inp: torch.Tensor,
+#     inp_next: torch.Tensor | None,
+#     module: torch.nn.Module,
+#     module_next: torch.nn.Module | None,
+#     H: torch.Tensor | None,
+#     num_samples: int,
+#     next_loss_lam: float,
+#     kernel_mode: str = 'default'
+# ) -> tuple[torch.Tensor, int]:
+#     inp = inp.to(device=H.device)
+    
+#     if len(inp.shape) == 2:
+#         inp = inp.unsqueeze(0)
+
+#     num_added = inp.shape[0]
+
+#     # Process input for current module
+#     match module:
+#         case torch.nn.Linear() | transformers.Conv1D():
+#             if len(inp.shape) == 3:
+#                 inp = inp.reshape((-1, inp.shape[-1]))
+#             inp = inp.t()
+#         case torch.nn.Conv2d():
+#             unfold = torch.nn.Unfold(
+#                 module.kernel_size,
+#                 dilation=module.dilation,
+#                 padding=module.padding,
+#                 stride=module.stride,
+#             )
+#             inp = unfold(inp)
+#             inp = inp.permute([1, 0, 2])
+#             inp = inp.flatten(1)
+
+#     # Process input for next module if it exists
+#     inp_next_processed = None
+#     if inp_next is not None and module_next is not None and next_loss_lam != 0:
+#         inp_next = inp_next.to(device=H.device)
+#         if len(inp_next.shape) == 2:
+#             inp_next = inp_next.unsqueeze(0)
+
+#         match module_next:
+#             case torch.nn.Linear() | transformers.Conv1D():
+#                 if len(inp_next.shape) == 3:
+#                     inp_next = inp_next.reshape((-1, inp_next.shape[-1]))
+#                 inp_next_processed = inp_next.t()
+#             case torch.nn.Conv2d():
+#                 unfold = torch.nn.Unfold(
+#                     module_next.kernel_size,
+#                     dilation=module_next.dilation,
+#                     padding=module_next.padding,
+#                     stride=module_next.stride,
+#                 )
+#                 inp_next_processed = unfold(inp_next)
+#                 inp_next_processed = inp_next_processed.permute([1, 0, 2])
+#                 inp_next_processed = inp_next_processed.flatten(1)
+
+#     # Update Hessian
+#     H *= num_samples / (num_samples + num_added)
+#     num_samples += num_added
+
+#     inp = inp.to(dtype=GPTQ_PRECISION)
+#     inp = math.sqrt(2 / num_samples) * inp
+
+#     # Combine current and next inputs if available
+#     if inp_next_processed is not None:
+#         inp_next_processed = inp_next_processed.to(dtype=GPTQ_PRECISION)
+#         inp_next_processed = math.sqrt(2 / num_samples) * inp_next_processed
+#         try:
+#             inp_all = inp + next_loss_lam * apply_conv(inp_next_processed, mode=kernel_mode)
+#         except RuntimeError:
+#             inp_all = inp
+#     else:
+#         inp_all = inp
+
+#     # Update Hessian with combined input
+#     # H[:inp_all.shape[0], :inp_all.shape[1]] += inp_all.matmul(inp_all.t())
+
+#     H += inp_all.matmul(inp_all.t())
+
+#     return H, num_samples
+
+
 def accumulate_hessian_next_reg(
     inp: torch.Tensor,
     inp_next: torch.Tensor | None,
@@ -78,7 +162,33 @@ def accumulate_hessian_next_reg(
     next_loss_lam: float,
     kernel_mode: str = 'default'
 ) -> tuple[torch.Tensor, int]:
-    inp = inp.to(device=H.device)
+    # Get device from H
+    device = H.device
+    
+    # Get module weights and move to correct device
+    # Используем weight.data чтобы избежать проблем с мета-тензорами
+    if hasattr(module, 'weight'):
+        if hasattr(module.weight, 'data'):
+            weight = module.weight.data.clone().to(device)
+        else:
+            weight = module.weight.clone().to(device)
+    else:
+        # Если у модуля нет weight (например, LayerNorm), создаём пустой тензор
+        weight = torch.zeros((0, 0), device=device, dtype=GPTQ_PRECISION)
+    
+    weight_next = None
+    if module_next is not None and hasattr(module_next, 'weight'):
+        # Проверяем, не является ли это мета-тензором
+        if module_next.weight.is_meta:
+            # Пропускаем вычисления с weight_next
+            weight_next = None
+        else:
+            if hasattr(module_next.weight, 'data'):
+                weight_next = module_next.weight.data.clone().to(device)
+            else:
+                weight_next = module_next.weight.clone().to(device)
+
+    inp = inp.to(device=device)
     
     if len(inp.shape) == 2:
         inp = inp.unsqueeze(0)
@@ -90,7 +200,7 @@ def accumulate_hessian_next_reg(
         case torch.nn.Linear() | transformers.Conv1D():
             if len(inp.shape) == 3:
                 inp = inp.reshape((-1, inp.shape[-1]))
-            inp = inp.t()
+            inp_processed = inp.t()
         case torch.nn.Conv2d():
             unfold = torch.nn.Unfold(
                 module.kernel_size,
@@ -98,14 +208,14 @@ def accumulate_hessian_next_reg(
                 padding=module.padding,
                 stride=module.stride,
             )
-            inp = unfold(inp)
-            inp = inp.permute([1, 0, 2])
-            inp = inp.flatten(1)
+            inp_processed = unfold(inp)
+            inp_processed = inp_processed.permute([1, 0, 2])
+            inp_processed = inp_processed.flatten(1)
 
     # Process input for next module if it exists
     inp_next_processed = None
     if inp_next is not None and module_next is not None and next_loss_lam != 0:
-        inp_next = inp_next.to(device=H.device)
+        inp_next = inp_next.to(device=device)
         if len(inp_next.shape) == 2:
             inp_next = inp_next.unsqueeze(0)
 
@@ -129,26 +239,69 @@ def accumulate_hessian_next_reg(
     H *= num_samples / (num_samples + num_added)
     num_samples += num_added
 
-    inp = inp.to(dtype=GPTQ_PRECISION)
-    inp = math.sqrt(2 / num_samples) * inp
+    # Преобразуем инпуты
+    inp_processed = inp_processed.to(dtype=GPTQ_PRECISION)
+    inp_processed = math.sqrt(2 / num_samples) * inp_processed
 
-    # Combine current and next inputs if available
-    if inp_next_processed is not None:
-        inp_next_processed = inp_next_processed.to(dtype=GPTQ_PRECISION)
-        inp_next_processed = math.sqrt(2 / num_samples) * inp_next_processed
+    # Для X' используем inp_processed
+    X_prime = inp_processed
+    
+    # Вычисляем дополнительные члены для нового гессиана
+    if (inp_next_processed is not None and 
+        weight_next is not None and 
+        next_loss_lam != 0 and
+        weight.numel() > 0 and weight_next.numel() > 0):
+        
+        # Get other layer activation
+        WX = weight @ inp_processed  # [out_features, batch]
+        
+        # Apply sigmoid
+        sigmoid_WX = torch.sigmoid(WX)  # [out_features, batch]
+        
+        # Count to simplify
+        batch_size = X_prime.shape[1]
+        out_features = weight.shape[0]
+        
+        # Count g_i as mean of all neirons
+        g_values = torch.zeros(batch_size, device=device, dtype=GPTQ_PRECISION)
+
+        is_runtime_error = False
+
         try:
-            inp_all = inp + next_loss_lam * apply_conv(inp_next_processed, mode=kernel_mode)
+            for i in range(batch_size):
+                # For all examples count mean impact
+                u_i = weight @ X_prime[:, i]  # [out_features]
+                a_i = torch.sigmoid(u_i)  # [out_features]
+                
+                # sigma_prime и sigma_double_prime для всех нейронов
+                sigma_prime = a_i * (1 - a_i)  # [out_features]
+                sigma_double_prime = sigma_prime * (1 - 2 * a_i)  # [out_features]
+                
+                # v_h norm for all neirons
+                v_norms = torch.norm(weight_next, dim=0)  # [out_features]
+                
+                # Mean g_i of all neirons
+                g_i_sum = 2 * (v_norms**2) * (sigma_prime**2 + a_i * sigma_double_prime)
+                g_values[i] = torch.mean(g_i_sum)
         except RuntimeError:
-            inp_all = inp
+            is_runtime_error = True
+
+        # Update hessian
+        if not is_runtime_error:
+            weights_matrix = torch.diag(2 + next_loss_lam * g_values)
+            H_update = X_prime @ weights_matrix @ X_prime.t()
+            
+            H += H_update / num_samples
+        else:
+            H += X_prime @ X_prime.t()
     else:
-        inp_all = inp
-
-    # Update Hessian with combined input
-    # H[:inp_all.shape[0], :inp_all.shape[1]] += inp_all.matmul(inp_all.t())
-
-    H += inp_all.matmul(inp_all.t())
+        H += X_prime @ X_prime.t()
 
     return H, num_samples
+
+
+
+
 
 
 def quantize_weight(

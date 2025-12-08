@@ -1,5 +1,7 @@
 import argparse
 import os
+import sys
+sys.path.append('/home/buka2004/PTQ-LLM-MIPT/llm-compressor/src')
 from llmcompressor.modifiers.quantization import GPTQModifier
 from llmcompressor.modifiers.smoothquant import SmoothQuantModifier, SmoothQuantRegModifier
 from datasets import load_dataset
