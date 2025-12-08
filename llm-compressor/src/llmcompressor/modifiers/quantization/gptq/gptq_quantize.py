@@ -13,6 +13,7 @@ from compressed_tensors.utils import update_offload_parameter
 from loguru import logger
 
 from llmcompressor.modifiers.utils import SPARSITY_THRESHOLD
+from llmcompressor.modifiers.utils.kernels import apply_conv
 from llmcompressor.observers.base import Observer
 from llmcompressor.pytorch.utils.helpers import tensor_sparsity
 
@@ -74,7 +75,8 @@ def accumulate_hessian_next_reg(
     module_next: torch.nn.Module | None,
     H: torch.Tensor | None,
     num_samples: int,
-    next_loss_lam: float
+    next_loss_lam: float,
+    kernel_mode: str = 'default'
 ) -> tuple[torch.Tensor, int]:
     inp = inp.to(device=H.device)
     
@@ -135,7 +137,7 @@ def accumulate_hessian_next_reg(
         inp_next_processed = inp_next_processed.to(dtype=GPTQ_PRECISION)
         inp_next_processed = math.sqrt(2 / num_samples) * inp_next_processed
         try:
-            inp_all = inp + next_loss_lam * inp_next_processed
+            inp_all = inp + next_loss_lam * apply_conv(inp_next_processed, mode=kernel_mode)
         except RuntimeError:
             inp_all = inp
     else:
@@ -156,7 +158,8 @@ def quantize_weight(
     blocksize: int = 128,
     percdamp: float = 0.01,
     module_next: torch.nn.Module | None = None,
-    next_reg_lam: float = 0.
+    next_reg_lam: float = 0.,
+    kernel_mode: str = 'default'
 ) -> tuple[float, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]:
     """
     Quantize a module weight according to the GPTQ algorithm
@@ -178,7 +181,7 @@ def quantize_weight(
     if module_next is not None and next_reg_lam != 0:
         H_next = hessians_dict[module_next]
         try:
-            H = H + next_reg_lam * H_next
+            H = H + next_reg_lam * apply_conv(H_next, mode=kernel_mode)
         except RuntimeError:
             pass
 

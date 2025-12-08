@@ -9,3 +9,4 @@ other modifier-specific parameters.
 __all__ = ["SPARSITY_THRESHOLD"]
 
 SPARSITY_THRESHOLD: float = 0.05
+

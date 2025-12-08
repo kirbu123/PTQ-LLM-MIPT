@@ -206,7 +206,7 @@ def evaluate_with_lm_eval(
 
 def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
-        scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0.,
+        scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
         hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True
     ):
@@ -225,7 +225,8 @@ def quantize_model_by_oneshot(
             targets=targets,
             ignore=ignore,
             next_reg_lam=next_reg_lam,
-            next_loss_lam=next_loss_lam
+            next_loss_lam=next_loss_lam,
+            kernel_mode=kernel_mode
         )]
 
     # Set variables using 
@@ -241,7 +242,7 @@ def quantize_model_by_oneshot(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    output_dir = os.path.join(output_dir, model_name, dataset_name, f'next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:hes_reg_lam={hes_reg_lam}')
+    output_dir = os.path.join(output_dir, model_name, dataset_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}')
 
     oneshot_model = oneshot(
         model=model,
@@ -286,6 +287,8 @@ def parse_args():
                        help='Regularization parameter for next layer influence')
     parser.add_argument('--next_loss_lam', type=float, default=0.0,
                        help='Regularization parameter for next layer loss influence')
+    parser.add_argument('--kernel_mode', type=str, default='default',
+                       help='Kernel type of the conv, using for local attention')
     parser.add_argument('--num_calibration_samples', type=int, default=512,
                        help='Number of calibration samples')
     parser.add_argument('--max_seq_length', type=int, default=1024,
@@ -324,6 +327,7 @@ if __name__ == "__main__":
         ignore=args.ignore,
         next_reg_lam=args.next_reg_lam,
         next_loss_lam=args.next_loss_lam,
+        kernel_mode=args.kernel_mode,
         num_calibration_samples=args.num_calibration_samples,
         max_seq_length=args.max_seq_length,
         gptq=args.gptq,

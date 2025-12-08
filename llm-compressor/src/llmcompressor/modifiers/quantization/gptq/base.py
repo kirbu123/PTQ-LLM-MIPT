@@ -120,6 +120,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     offload_hessians: bool = False
     next_reg_lam: float = 0.0  # New parameter
     next_loss_lam: float = 0.0  # New parameter
+    kernel_mode: str = 'default' # New parameter
 
     # private variables
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
@@ -297,8 +298,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     module_next,
                     self._hessians[module],
                     self._num_samples[module],
-                    self.next_loss_lam
-                ) 
+                    self.next_loss_lam,
+                    kernel_mode = self.kernel_mode
+                )
 
     def compress_modules(self):
         """
@@ -326,7 +328,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     blocksize=self.block_size,
                     percdamp=self.dampening_frac,
                     module_next=module_next,
-                    next_reg_lam=self.next_reg_lam
+                    next_reg_lam=self.next_reg_lam,
+                    kernel_mode=self.kernel_mode
                 )
                 comp_logger.set_loss(loss)
 
