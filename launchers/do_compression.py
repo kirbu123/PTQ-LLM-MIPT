@@ -210,8 +210,11 @@ def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
-        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True
+        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False,
+        seed=42
     ):
+
+    output_dir = os.path.join(output_dir, model_name, dataset_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
 
     if smoothquant and smoothquantreg:
         ValueError('Evailable to use only one smooth method, picked two')
@@ -228,7 +231,9 @@ def quantize_model_by_oneshot(
             ignore=ignore,
             next_reg_lam=next_reg_lam,
             next_loss_lam=next_loss_lam,
-            kernel_mode=kernel_mode
+            kernel_mode=kernel_mode,
+            log_dir=output_dir,
+            lam_optimize=lam_optimize
         )]
 
     # Set variables using 
@@ -243,8 +248,6 @@ def quantize_model_by_oneshot(
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-
-    output_dir = os.path.join(output_dir, model_name, dataset_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}')
 
     oneshot_model = oneshot(
         model=model,
@@ -274,6 +277,10 @@ def parse_args():
                        help='Dataset subset for calibration')
     parser.add_argument('--output_dir', type=str, 
                        help='Output directory for quantized model (optional)')
+
+    # Param optimize
+    parser.add_argument('--lam_optimize', action='store_true',
+                   help='Enable lam param optimize')
 
     # GPTQ parameters
     parser.add_argument('--gptq', action='store_true',
@@ -336,7 +343,9 @@ if __name__ == "__main__":
         smoothquant=args.smoothquant,
         smoothquantreg=args.smoothquantreg,
         hes_reg_lam=args.hes_reg_lam,
-        smoothing_strength=args.smoothing_strength
+        smoothing_strength=args.smoothing_strength,
+        lam_optimize=args.lam_optimize,
+        seed=args.seed
     )
 
     # Run lm_eval evaluation

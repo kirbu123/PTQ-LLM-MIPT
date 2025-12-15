@@ -521,7 +521,8 @@ def quantize_weight(
         W.transpose_(0, 1)
     W = W.reshape(final_shape).to(final_dtype)
 
-    loss = torch.sum(losses).item()
+    # loss = torch.sum(losses).item()
+    loss = torch.sum(losses)
     return (
         loss,
         W,

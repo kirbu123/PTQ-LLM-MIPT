@@ -3,7 +3,12 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from itertools import islice
 
+import os
+import datetime
+
 import torch
+import torch.nn as nn
+
 from compressed_tensors.quantization import (
     QuantizationConfig,
     QuantizationScheme,
@@ -32,8 +37,15 @@ from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
 
+from torch.utils.tensorboard import SummaryWriter
+
 __all__ = ["GPTQModifier"]
 
+
+class LambdaLoss(nn.Module):
+    def forward(self, lam, curr, prev):
+        # Returns a tensor connected to 'lam' for autograd
+        return prev + 2 * lam 
 
 class GPTQModifier(Modifier, QuantizationMixin):
     """
@@ -118,9 +130,24 @@ class GPTQModifier(Modifier, QuantizationMixin):
     # TODO: this does not serialize / will be incorrectly written
     actorder: Optional[Union[ActivationOrdering, Sentinel]] = Sentinel("static")
     offload_hessians: bool = False
+
     next_reg_lam: float = 0.0  # New parameter
     next_loss_lam: float = 0.0  # New parameter
     kernel_mode: str = 'default' # New parameter
+
+    next_reg_lam: float = 0.0  # New parameter
+    next_loss_lam: float = 0.0  # New parameter
+    kernel_mode: str = 'default' # New parameter
+
+    # Lam optimize params
+    lam_optimize: bool = False
+    log_dir: str = './log'
+    _log_writer: SummaryWriter = PrivateAttr()
+
+    # Add these as PrivateAttr since they're not serializable/model fields
+    _lam_tensor: torch.nn.Parameter = PrivateAttr()
+    _lam_optimizer: torch.optim.Optimizer = PrivateAttr()
+    _step_num: int = PrivateAttr()
 
     # private variables
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
@@ -174,6 +201,18 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 state.model, self.resolved_targets, self.ignore
             )
         }
+
+        # Tensorboard init
+        log_path = os.path.join(self.log_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
+        self._log_writer = SummaryWriter(log_dir=log_path)
+
+        if self.lam_optimize:
+            self._step_num = 0
+            self._lam_tensor = torch.nn.Parameter(
+                torch.tensor(self.next_reg_lam, dtype=torch.float32), 
+                requires_grad=True
+            )
+            self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=0.0003)
 
         return True
 
@@ -302,11 +341,39 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     kernel_mode = self.kernel_mode
                 )
 
+    def _update_lam_param(self, lam_loss, prev_loss, loss, step_num):
+
+        if prev_loss is not None:
+            with torch.enable_grad():
+                self._lam_optimizer.zero_grad()
+
+                loss_reg = lam_loss(self._lam_tensor, loss.item(), prev_loss.item())
+
+                loss_reg.backward()
+                self._lam_optimizer.step()
+
+            self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num)
+            self._log_writer.add_scalar('lam-param', self.next_reg_lam, self._step_num)
+            self._step_num += 1
+
+            self.next_reg_lam = self._lam_tensor.item()
+    
+        prev_loss = loss.detach()
+
+        return prev_loss
+
     def compress_modules(self):
         """
         Quantize modules which have been calibrated
         """
         keys_list = list(self._num_samples.keys())
+
+        prev_loss = None
+
+        lam_loss = LambdaLoss()
+
+        if self.lam_optimize:
+            self._lam_optimizer.zero_grad()
 
         for i, module in enumerate(list(self._num_samples.keys())):
             name = self._module_names[module]
@@ -331,7 +398,16 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     next_reg_lam=self.next_reg_lam,
                     kernel_mode=self.kernel_mode
                 )
-                comp_logger.set_loss(loss)
+                comp_logger.set_loss(loss.item())
+
+            # Update state for next iteration
+            if self.lam_optimize:
+                prev_loss = self._update_lam_param(
+                    lam_loss=lam_loss,
+                    prev_loss=prev_loss,
+                    loss=loss,
+                    step_num=i 
+                )
 
             update_offload_parameter(module, "weight", quantized_weight)
             update_offload_parameter(module, "weight_scale", scale)
@@ -349,6 +425,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         self.ended_ = True
         QuantizationMixin.end_calibration(self, state.model)
         self.remove_hooks()  # remove gptq hooks
+        self._log_writer.close()
 
     def on_finalize(self, state: State, **kwargs) -> bool:
         """

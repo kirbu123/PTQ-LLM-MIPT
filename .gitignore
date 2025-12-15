@@ -161,3 +161,6 @@ tensorboard/
 
 # Checkpoints
 quant_checkpoints/
+
+# Notebooks
+notebooks/
