@@ -210,7 +210,7 @@ def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
-        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False,
+        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, lam_lr=3e-4,
         seed=42
     ):
 
@@ -233,7 +233,8 @@ def quantize_model_by_oneshot(
             next_loss_lam=next_loss_lam,
             kernel_mode=kernel_mode,
             log_dir=output_dir,
-            lam_optimize=lam_optimize
+            lam_optimize=lam_optimize,
+            lam_lr=lam_lr
         )]
 
     # Set variables using 
@@ -312,6 +313,8 @@ def parse_args():
                        help='Regularization alpha parameter for smoothquant method')
     parser.add_argument('--hes_reg_lam', type=float, default=0.1,
                        help='Regularization lam parameter for smoothquant weight hesian reg')
+    parser.add_argument('--lam_lr', type=float, default=3e-4,
+                       help='Regularization lam parameter optimization lr')
 
     # Other parameters
     parser.add_argument('--seed', type=int, default=42,
@@ -345,6 +348,7 @@ if __name__ == "__main__":
         hes_reg_lam=args.hes_reg_lam,
         smoothing_strength=args.smoothing_strength,
         lam_optimize=args.lam_optimize,
+        lam_lr=args.lam_lr,
         seed=args.seed
     )
 

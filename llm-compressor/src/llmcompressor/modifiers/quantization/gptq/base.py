@@ -36,16 +36,17 @@ from llmcompressor.modifiers.quantization.gptq.gptq_quantize import (
 from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
+from llmcompressor.utils.loss import (
+    HessianLoss,
+    LambdaLoss,
+    HessianLossUpgrade,
+    HessianLossNormCos
+)
 
 from torch.utils.tensorboard import SummaryWriter
 
 __all__ = ["GPTQModifier"]
 
-
-class LambdaLoss(nn.Module):
-    def forward(self, lam, curr, prev):
-        # Returns a tensor connected to 'lam' for autograd
-        return prev + 2 * lam 
 
 class GPTQModifier(Modifier, QuantizationMixin):
     """
@@ -134,10 +135,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     next_reg_lam: float = 0.0  # New parameter
     next_loss_lam: float = 0.0  # New parameter
     kernel_mode: str = 'default' # New parameter
-
-    next_reg_lam: float = 0.0  # New parameter
-    next_loss_lam: float = 0.0  # New parameter
-    kernel_mode: str = 'default' # New parameter
+    lam_lr: float = 3e-4
 
     # Lam optimize params
     lam_optimize: bool = False
@@ -212,7 +210,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 torch.tensor(self.next_reg_lam, dtype=torch.float32), 
                 requires_grad=True
             )
-            self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=0.0003)
+            self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
 
         return True
 
@@ -341,13 +339,36 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     kernel_mode = self.kernel_mode
                 )
 
-    def _update_lam_param(self, lam_loss, prev_loss, loss, step_num):
+    # def _update_lam_param(self, lam_loss, prev_loss, loss, step_num):
 
-        if prev_loss is not None:
+    #     if prev_loss is not None:
+    #         with torch.enable_grad():
+    #             self._lam_optimizer.zero_grad()
+
+    #             loss_reg = lam_loss(self._lam_tensor, loss.item(), prev_loss.item())
+
+    #             loss_reg.backward()
+    #             self._lam_optimizer.step()
+
+    #         self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num)
+    #         self._log_writer.add_scalar('lam-param', self.next_reg_lam, self._step_num)
+    #         self._step_num += 1
+
+    #         self.next_reg_lam = self._lam_tensor.item()
+    
+    #     prev_loss = loss.detach()
+
+    #     return prev_loss
+    
+    def _update_lam_param(self, lam_loss, module, module_next, step_num):
+        if module_next is not None:
+            H = self._hessians[module]
+            H_next = self._hessians[module_next]
+
             with torch.enable_grad():
                 self._lam_optimizer.zero_grad()
 
-                loss_reg = lam_loss(self._lam_tensor, loss.item(), prev_loss.item())
+                loss_reg = lam_loss(self._lam_tensor, H, H_next, self.kernel_mode)
 
                 loss_reg.backward()
                 self._lam_optimizer.step()
@@ -358,9 +379,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
             self.next_reg_lam = self._lam_tensor.item()
     
-        prev_loss = loss.detach()
-
-        return prev_loss
+        return 0
 
     def compress_modules(self):
         """
@@ -370,7 +389,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         prev_loss = None
 
-        lam_loss = LambdaLoss()
+        lam_loss = HessianLossNormCos() # HessianLossUpgrade() # LambdaLoss()
 
         if self.lam_optimize:
             self._lam_optimizer.zero_grad()
@@ -404,10 +423,12 @@ class GPTQModifier(Modifier, QuantizationMixin):
             if self.lam_optimize:
                 prev_loss = self._update_lam_param(
                     lam_loss=lam_loss,
-                    prev_loss=prev_loss,
-                    loss=loss,
+                    module=module,
+                    module_next=module_next,
                     step_num=i 
                 )
+            
+            del self._hessians[module]
 
             update_offload_parameter(module, "weight", quantized_weight)
             update_offload_parameter(module, "weight_scale", scale)
