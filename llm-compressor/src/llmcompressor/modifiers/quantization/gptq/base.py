@@ -37,13 +37,22 @@ from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
 from llmcompressor.utils.loss import (
-    HessianLoss,
     LambdaLoss,
-    HessianLossUpgrade,
-    HessianLossNormCos
+    HessianLoss,
+    HessianLossNormed,
+    HessianLossNormCos,
+    HessianLossSoftCos
 )
 
 from torch.utils.tensorboard import SummaryWriter
+
+LOSS_DICT = {
+    'LambdaLoss': LambdaLoss,
+    'HessianLoss': HessianLoss,
+    'HessianLossNormed': HessianLossNormed,
+    'HessianLossNormCos': HessianLossNormCos,
+    'HessianLossSoftCos': HessianLossSoftCos
+}
 
 __all__ = ["GPTQModifier"]
 
@@ -136,6 +145,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
     next_loss_lam: float = 0.0  # New parameter
     kernel_mode: str = 'default' # New parameter
     lam_lr: float = 3e-4
+    lam_loss_name: str = 'HessianLossNormed'
+    opt_steps_num: int = 10
 
     # Lam optimize params
     lam_optimize: bool = False
@@ -145,6 +156,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     # Add these as PrivateAttr since they're not serializable/model fields
     _lam_tensor: torch.nn.Parameter = PrivateAttr()
     _lam_optimizer: torch.optim.Optimizer = PrivateAttr()
+    _lam_loss = PrivateAttr()
     _step_num: int = PrivateAttr()
 
     # private variables
@@ -205,12 +217,13 @@ class GPTQModifier(Modifier, QuantizationMixin):
         self._log_writer = SummaryWriter(log_dir=log_path)
 
         if self.lam_optimize:
-            self._step_num = 0
             self._lam_tensor = torch.nn.Parameter(
                 torch.tensor(self.next_reg_lam, dtype=torch.float32), 
                 requires_grad=True
             )
             self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+            self._lam_loss = LOSS_DICT[self.lam_loss_name]()
+            self._step_num = 0
 
         return True
 
@@ -339,46 +352,38 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     kernel_mode = self.kernel_mode
                 )
 
-    # def _update_lam_param(self, lam_loss, prev_loss, loss, step_num):
+    def _update_lam_param(self, lam_loss, module, module_next):
+        module_name = self._module_names[module]
 
-    #     if prev_loss is not None:
-    #         with torch.enable_grad():
-    #             self._lam_optimizer.zero_grad()
-
-    #             loss_reg = lam_loss(self._lam_tensor, loss.item(), prev_loss.item())
-
-    #             loss_reg.backward()
-    #             self._lam_optimizer.step()
-
-    #         self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num)
-    #         self._log_writer.add_scalar('lam-param', self.next_reg_lam, self._step_num)
-    #         self._step_num += 1
-
-    #         self.next_reg_lam = self._lam_tensor.item()
-    
-    #     prev_loss = loss.detach()
-
-    #     return prev_loss
-    
-    def _update_lam_param(self, lam_loss, module, module_next, step_num):
         if module_next is not None:
             H = self._hessians[module]
             H_next = self._hessians[module_next]
 
             with torch.enable_grad():
-                self._lam_optimizer.zero_grad()
+                for i in range(self.opt_steps_num):
+                    self._lam_optimizer.zero_grad()
 
-                loss_reg = lam_loss(self._lam_tensor, H, H_next, self.kernel_mode)
+                    loss_reg, sorted_eigens = lam_loss(self._lam_tensor, H, H_next, self.kernel_mode)
 
-                loss_reg.backward()
-                self._lam_optimizer.step()
+                    loss_reg.backward()
+                    self._lam_optimizer.step()
 
             self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num)
             self._log_writer.add_scalar('lam-param', self.next_reg_lam, self._step_num)
-            self._step_num += 1
+            if sorted_eigens is not None:
+                max_plot_values = min(10000, len(sorted_eigens))
+                for idx in range(max_plot_values):
+                    eigenvalue = sorted_eigens[idx].item()
+                    self._log_writer.add_scalar(
+                        f'eigenvalue-spectr/{self._step_num}',
+                        eigenvalue,
+                        idx
+                    )
 
             self.next_reg_lam = self._lam_tensor.item()
-    
+
+        self._step_num += 1
+
         return 0
 
     def compress_modules(self):
@@ -389,8 +394,6 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         prev_loss = None
 
-        lam_loss = HessianLossNormCos() # HessianLossUpgrade() # LambdaLoss()
-
         if self.lam_optimize:
             self._lam_optimizer.zero_grad()
 
@@ -399,14 +402,22 @@ class GPTQModifier(Modifier, QuantizationMixin):
             num_samples = self._num_samples[module]
             quant_args = getattr_chain(module, "quantization_scheme.weights")
 
+            module_next = next(islice(keys_list, i+1, i+2), None)
+
+            logger.info(f"Optimiting lam using {self.opt_steps_num} iterations")
+            if self.lam_optimize:
+                prev_loss = self._update_lam_param(
+                    lam_loss=self._lam_loss,
+                    module=module,
+                    module_next=module_next,
+                )
+
             logger.info(f"Quantizing {name} using {num_samples} samples")
             with torch.no_grad(), align_module_device(
                 module
             ), self._maybe_onload_hessian(module), CompressionLogger(
                 module
             ) as comp_logger:
-                module_next = next(islice(keys_list, i+1, i+2), None)
-
                 loss, quantized_weight, scale, zero_point, g_idx = quantize_weight(
                     module=module,
                     quant_args=quant_args,
@@ -419,15 +430,6 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 )
                 comp_logger.set_loss(loss.item())
 
-            # Update state for next iteration
-            if self.lam_optimize:
-                prev_loss = self._update_lam_param(
-                    lam_loss=lam_loss,
-                    module=module,
-                    module_next=module_next,
-                    step_num=i 
-                )
-            
             del self._hessians[module]
 
             update_offload_parameter(module, "weight", quantized_weight)
