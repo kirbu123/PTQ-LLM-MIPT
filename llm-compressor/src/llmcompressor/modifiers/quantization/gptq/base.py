@@ -41,7 +41,8 @@ from llmcompressor.utils.loss import (
     HessianLoss,
     HessianLossNormed,
     HessianLossNormCos,
-    HessianLossSoftCos
+    HessianLossSoftCos,
+    HessianLossSoftCosOptimized
 )
 
 from torch.utils.tensorboard import SummaryWriter
@@ -51,7 +52,8 @@ LOSS_DICT = {
     'HessianLoss': HessianLoss,
     'HessianLossNormed': HessianLossNormed,
     'HessianLossNormCos': HessianLossNormCos,
-    'HessianLossSoftCos': HessianLossSoftCos
+    'HessianLossSoftCos': HessianLossSoftCos,
+    'HessianLossSoftCosOptimized': HessianLossSoftCosOptimized
 }
 
 __all__ = ["GPTQModifier"]
