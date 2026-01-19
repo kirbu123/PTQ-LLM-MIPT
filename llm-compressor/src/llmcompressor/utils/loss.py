@@ -64,7 +64,7 @@ class HessianLossNormCos(nn.Module):
             # Convert to real (since h is symmetric, eigenvalues should be real)
             eigenvalues = eigenvalues.real
             eigenvectors = eigenvectors.real
-            
+
             # Sort by absolute value
             sorted_indices = torch.argsort(torch.abs(eigenvalues), descending=True)
             sorted_eigenvalues = eigenvalues[sorted_indices]
@@ -92,21 +92,36 @@ class HessianLossNormCos(nn.Module):
             return torch.tensor(0.01, dtype=torch.float32, device=H.device, requires_grad=True), sorted_eigenvalues
 
 class HessianLossSoftCos(nn.Module):
-    def forward(self, lam, H, H_next, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
-        try:
-            h = H + lam * apply_conv(H_next, mode=kernel_mode)
-            h = (h + h.T) / 2
-            h = h + reg_coef * torch.eye(h.shape[0], device=h.device, dtype=h.dtype)
-        except RuntimeError:
-            return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
+    def forward(self, lam, module, module_next, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
+        
+        # Legacy part with calculations
+
+        H, H_next = hessians[module], hessians[module_next]
+
+        # try:
+        #     h = H + lam * apply_conv(H_next, mode=kernel_mode)
+        #     h = (h + h.T) / 2
+        #     h = h + reg_coef * torch.eye(h.shape[0], device=h.device, dtype=h.dtype)
+        # except RuntimeError:
+        #     return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
+
+        # try:
+        #     U, S, Vh = torch.linalg.svd(h, full_matrices=False)
+        #     eigenvalues = S
+        #     eigenvectors = U
+        #     # eigenvalues, eigenvectors = torch.linalg.eigh(h)
+        # except:
+        #     return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
+
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device)
+        dummy_loss = dummy_loss + 0.0 * lam  # Connect to lam
+        dummy_loss = dummy_loss.requires_grad_(True)
 
         try:
-            U, S, Vh = torch.linalg.svd(h, full_matrices=False)
-            eigenvalues = S
-            eigenvectors = U
-            # eigenvalues, eigenvectors = torch.linalg.eigh(h)
-        except:
-            return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
+            eigenvalues = eigenvals[module] + lam * eigenvals[module_next]
+            eigenvectors = eigenvects[module] + lam * eigenvects[module_next]
+        except RuntimeError:
+            return dummy_loss, None
 
         sorted_indices = torch.argsort(torch.abs(eigenvalues), descending=True)
         sorted_eigenvalues = eigenvalues[sorted_indices]
@@ -115,7 +130,7 @@ class HessianLossSoftCos(nn.Module):
         eigenvectors = eigenvectors[:, sorted_indices]
 
         if eigenvalues.shape[0] < 2:
-            return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), sorted_eigenvalues
+            return dummy_loss, sorted_eigenvalues
 
         mask_pos = eigenvalues > 0
         mask_neg = eigenvalues < 0

@@ -149,6 +149,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     lam_lr: float = 3e-4
     lam_loss_name: str = 'HessianLossNormed'
     opt_steps_num: int = 10
+    k_next: int = 2
 
     # Lam optimize params
     lam_optimize: bool = False
@@ -165,6 +166,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
     _hessians: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
     _num_samples: Dict[torch.nn.Module, int] = PrivateAttr(default_factory=dict)
+    _eigenvals: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
+    _eigenvects: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
 
     def resolve_quantization_config(self) -> QuantizationConfig:
         config = super().resolve_quantization_config()
@@ -335,37 +338,50 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         # Accumulate hessian with input with optional offloading
         with self._maybe_onload_hessian(module):
-            if self.next_loss_lam == 0.:
-                self._hessians[module], self._num_samples[module] = accumulate_hessian(
-                    inp,
-                    module,
-                    self._hessians[module],
-                    self._num_samples[module],
-                )
-            else:
-                self._hessians[module], self._num_samples[module] = accumulate_hessian_next_reg(
-                    inp,
-                    inp_next,
-                    module,
-                    module_next,
-                    self._hessians[module],
-                    self._num_samples[module],
-                    self.next_loss_lam,
-                    kernel_mode = self.kernel_mode
-                )
+            # if self.next_loss_lam == 0.:
+            #     self._hessians[module], self._num_samples[module], self._eigenvals[module], self._eigenvects[module] = accumulate_hessian(
+            #         inp,
+            #         module,
+            #         self._hessians[module],
+            #         self._num_samples[module],
+            #     )
+            # else:
+            #     self._hessians[module], self._num_samples[module] = accumulate_hessian_next_reg(
+            #         inp,
+            #         inp_next,
+            #         module,
+            #         module_next,
+            #         self._hessians[module],
+            #         self._num_samples[module],
+            #         self.next_loss_lam,
+            #         kernel_mode = self.kernel_mode
+            #     )
+
+            self._hessians[module], self._num_samples[module], self._eigenvals[module], self._eigenvects[module] = accumulate_hessian(
+                inp,
+                module,
+                self._hessians[module],
+                self._num_samples[module],
+            )
 
     def _update_lam_param(self, lam_loss, module, module_next):
         module_name = self._module_names[module]
 
         if module_next is not None:
-            H = self._hessians[module]
-            H_next = self._hessians[module_next]
 
             with torch.enable_grad():
                 for i in range(self.opt_steps_num):
                     self._lam_optimizer.zero_grad()
 
-                    loss_reg, sorted_eigens = lam_loss(self._lam_tensor, H, H_next, self.kernel_mode)
+                    loss_reg, sorted_eigens = lam_loss(
+                        lam=self._lam_tensor,
+                        module=module,
+                        module_next=module_next,
+                        hessians=self._hessians,
+                        eigenvals=self._eigenvals,
+                        eigenvects=self._eigenvects,
+                        kernel_mode=self.kernel_mode
+                    )
 
                     loss_reg.backward()
                     self._lam_optimizer.step()
@@ -404,7 +420,23 @@ class GPTQModifier(Modifier, QuantizationMixin):
             num_samples = self._num_samples[module]
             quant_args = getattr_chain(module, "quantization_scheme.weights")
 
-            module_next = next(islice(keys_list, i+1, i+2), None)
+            # Get k modules starting from position i+1
+            start_idx = i + 1
+            end_idx = i + 1 + self.k_next
+            next_modules = []
+            is_none = False
+
+            for j in range(start_idx, end_idx):
+                if j < len(keys_list):
+                    next_modules.append(keys_list[j])
+                else:
+                    next_modules.append(None)
+                    is_none = True
+
+            # module_next = next(islice(keys_list, i+1, i+2), None)
+            module_next = next_modules[0]
+
+            if is_none: next_modules = None
 
             logger.info(f"Optimiting lam using {self.opt_steps_num} iterations")
             if self.lam_optimize:

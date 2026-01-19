@@ -31,12 +31,13 @@ def make_empty_hessian(
     return torch.zeros((num_columns, num_columns), device=device, dtype=GPTQ_PRECISION)
 
 
+# Original method with eigenvalues and eigenvectors calculation
 def accumulate_hessian(
     inp: torch.Tensor,
     module: torch.nn.Module,
     H: torch.Tensor | None,
     num_samples: int,
-) -> tuple[torch.Tensor, int]:
+) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]:
     inp = inp.to(device=H.device)
     if len(inp.shape) == 2:
         inp = inp.unsqueeze(0)
@@ -66,7 +67,13 @@ def accumulate_hessian(
     inp = math.sqrt(2 / num_samples) * inp
     H += inp.matmul(inp.t())
 
-    return H, num_samples
+    # Eigenvalues and eigenvectors calculation
+    h = (H + H.T) / 2
+    U, S, Vh = torch.linalg.svd(h, full_matrices=False)
+    eigenvalues = S
+    eigenvectors = U
+
+    return H, num_samples, eigenvalues, eigenvectors
 
 
 # def accumulate_hessian_next_reg(
