@@ -92,11 +92,11 @@ class HessianLossNormCos(nn.Module):
             return torch.tensor(0.01, dtype=torch.float32, device=H.device, requires_grad=True), sorted_eigenvalues
 
 class HessianLossSoftCos(nn.Module):
-    def forward(self, lam, module, module_next, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
+    def forward(self, lam, module, next_modules, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
         
         # Legacy part with calculations
 
-        H, H_next = hessians[module], hessians[module_next]
+        H = hessians[module]
 
         # try:
         #     h = H + lam * apply_conv(H_next, mode=kernel_mode)
@@ -113,13 +113,15 @@ class HessianLossSoftCos(nn.Module):
         # except:
         #     return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
 
-        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device)
-        dummy_loss = dummy_loss + 0.0 * lam  # Connect to lam
-        dummy_loss = dummy_loss.requires_grad_(True)
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
 
         try:
-            eigenvalues = eigenvals[module] + lam * eigenvals[module_next]
-            eigenvectors = eigenvects[module] + lam * eigenvects[module_next]
+            eigenvalues = eigenvals[module]
+            eigenvectors = eigenvects[module]
+
+            for i, module_next in enumerate(next_modules):
+                eigenvalues += lam[i] * eigenvals[module_next]
+                eigenvectors += lam[i] * eigenvects[module_next]
         except RuntimeError:
             return dummy_loss, None
 
@@ -206,7 +208,7 @@ class HessianLossSoftCos(nn.Module):
         # Добавляем штраф за дисбаланс собственных значений
         balance_penalty = torch.abs(torch.mean(torch.abs(pos_eigenvalues)) - torch.mean(torch.abs(neg_eigenvalues))) / \
                          (torch.mean(torch.abs(eigenvalues)) + eps)
-        
+
         loss = cos_sim - 0.05 * balance_penalty
         
         return loss, sorted_eigenvalues

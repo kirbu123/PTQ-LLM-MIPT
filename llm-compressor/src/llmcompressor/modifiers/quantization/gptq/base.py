@@ -223,7 +223,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         if self.lam_optimize:
             self._lam_tensor = torch.nn.Parameter(
-                torch.tensor(self.next_reg_lam, dtype=torch.float32), 
+                torch.full((self.k_next,), self.next_reg_lam, dtype=torch.float32),
                 requires_grad=True
             )
             self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
@@ -364,10 +364,17 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 self._num_samples[module],
             )
 
-    def _update_lam_param(self, lam_loss, module, module_next):
-        module_name = self._module_names[module]
+    def _update_lam_param(self, lam_loss, module, next_modules):
+        if next_modules is not None:
 
-        if module_next is not None:
+            device = self._hessians[module].device
+
+            if self._lam_tensor.device != device:
+                self._lam_tensor = self._lam_tensor.to(device)
+                self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+
+            if not self._lam_tensor.requires_grad:
+                self._lam_tensor.requires_grad_(True)
 
             with torch.enable_grad():
                 for i in range(self.opt_steps_num):
@@ -376,18 +383,19 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     loss_reg, sorted_eigens = lam_loss(
                         lam=self._lam_tensor,
                         module=module,
-                        module_next=module_next,
+                        next_modules=next_modules,
                         hessians=self._hessians,
                         eigenvals=self._eigenvals,
                         eigenvects=self._eigenvects,
                         kernel_mode=self.kernel_mode
                     )
 
-                    loss_reg.backward()
+                    loss_reg.backward(retain_graph=True)
+
                     self._lam_optimizer.step()
 
             self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num)
-            self._log_writer.add_scalar('lam-param', self.next_reg_lam, self._step_num)
+            self._log_writer.add_scalar('lam-param', torch.mean(self._lam_tensor).item(), self._step_num)
             if sorted_eigens is not None:
                 max_plot_values = min(10000, len(sorted_eigens))
                 for idx in range(max_plot_values):
@@ -397,8 +405,6 @@ class GPTQModifier(Modifier, QuantizationMixin):
                         eigenvalue,
                         idx
                     )
-
-            self.next_reg_lam = self._lam_tensor.item()
 
         self._step_num += 1
 
@@ -434,7 +440,6 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     is_none = True
 
             # module_next = next(islice(keys_list, i+1, i+2), None)
-            module_next = next_modules[0]
 
             if is_none: next_modules = None
 
@@ -443,7 +448,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 prev_loss = self._update_lam_param(
                     lam_loss=self._lam_loss,
                     module=module,
-                    module_next=module_next,
+                    next_modules=next_modules,
                 )
 
             logger.info(f"Quantizing {name} using {num_samples} samples")
@@ -458,8 +463,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     hessians_dict=self._hessians,
                     blocksize=self.block_size,
                     percdamp=self.dampening_frac,
-                    module_next=module_next,
-                    next_reg_lam=self.next_reg_lam,
+                    next_modules=next_modules,
+                    lam_tensor=self._lam_tensor,
                     kernel_mode=self.kernel_mode
                 )
                 comp_logger.set_loss(loss.item())

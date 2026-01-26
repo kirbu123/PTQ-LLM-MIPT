@@ -70,8 +70,13 @@ def accumulate_hessian(
     # Eigenvalues and eigenvectors calculation
     h = (H + H.T) / 2
     U, S, Vh = torch.linalg.svd(h, full_matrices=False)
+
     eigenvalues = S
     eigenvectors = U
+
+    # DEBUG
+    # eigenvalues = torch.full((H.shape[0],), 1e-5, dtype=H.dtype, device=H.device)
+    # eigenvectors = torch.full(H.shape, 1e-5, dtype=H.dtype, device=H.device)
 
     return H, num_samples, eigenvalues, eigenvectors
 
@@ -307,18 +312,14 @@ def accumulate_hessian_next_reg(
     return H, num_samples
 
 
-
-
-
-
 def quantize_weight(
     module: torch.nn.Module,
     quant_args: QuantizationArgs,
     hessians_dict: dict[torch.nn.Module, torch.Tensor],
     blocksize: int = 128,
     percdamp: float = 0.01,
-    module_next: torch.nn.Module | None = None,
-    next_reg_lam: float = 0.,
+    next_modules: torch.nn.Module | None = None,
+    lam_tensor: torch.Tensor | None = 0.,
     kernel_mode: str = 'default'
 ) -> tuple[float, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]:
     """
@@ -338,10 +339,11 @@ def quantize_weight(
     W = module.weight.clone()
     # Caclulate Hessian
     H = hessians_dict[module]  # unfortunately python does not have a `move` keyword
-    if module_next is not None and next_reg_lam != 0:
-        H_next = hessians_dict[module_next]
+    if next_modules is not None and lam_tensor is not None:
         try:
-            H = H + next_reg_lam * apply_conv(H_next, mode=kernel_mode)
+            for i, module_next in enumerate(next_modules):
+                H_next = hessians_dict[module_next]
+                H += lam_tensor[i] * apply_conv(H_next, mode=kernel_mode)
         except RuntimeError:
             pass
 

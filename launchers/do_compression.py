@@ -210,11 +210,12 @@ def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
-        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, lam_lr=3e-4, lam_loss_name='HessianLossNormed',
+        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, lam_lr=3e-4, k_next=1, opt_steps_num=10,
+        lam_loss_name='HessianLossNormed',
         seed=42
     ):
 
-    output_dir = os.path.join(output_dir, model_name, dataset_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
+    output_dir = os.path.join(output_dir, model_name, dataset_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
 
     if smoothquant and smoothquantreg:
         ValueError('Evailable to use only one smooth method, picked two')
@@ -235,6 +236,8 @@ def quantize_model_by_oneshot(
             log_dir=output_dir,
             lam_optimize=lam_optimize,
             lam_lr=lam_lr,
+            k_next=k_next,
+            opt_steps_num=opt_steps_num,
             lam_loss_name=lam_loss_name
         )]
 
@@ -316,6 +319,10 @@ def parse_args():
                        help='Regularization lam parameter for smoothquant weight hesian reg')
     parser.add_argument('--lam_lr', type=float, default=3e-4,
                        help='Regularization lam parameter optimization lr')
+    parser.add_argument('--k_next', type=int, default=1,
+                       help='Regularization lam parameter optimization lr')
+    parser.add_argument('--opt_steps_num', type=int, default=10,
+                       help='Regularization lam parameter optimization lr')
     parser.add_argument('--lam_loss_name', type=str, default='HessianLossNormed',
                        help='Regularization lam parameter optimization loss name')
 
@@ -352,6 +359,8 @@ if __name__ == "__main__":
         smoothing_strength=args.smoothing_strength,
         lam_optimize=args.lam_optimize,
         lam_lr=args.lam_lr,
+        k_next=args.k_next,
+        opt_steps_num=args.opt_steps_num,
         lam_loss_name=args.lam_loss_name,
         seed=args.seed
     )
