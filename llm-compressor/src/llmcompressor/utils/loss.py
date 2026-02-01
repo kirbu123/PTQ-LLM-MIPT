@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from llmcompressor.modifiers.utils.kernels import apply_conv
 
-__all__ = ["LambdaLoss", "HessianLossNormed", "HessianLoss", "HessianLossNormCos", "HessianLossSoftCos", "HessianLossSoftCosOptimized"]
+__all__ = ["LambdaLoss", "HessianLossNormed", "HessianLoss", "HessianLossNormCos", "HessianLossSoftCos", "HessianLossSoftCosOptimized", "HessianLossTrace"]
 
 class LambdaLoss(nn.Module):
     def forward(self, lam, curr, prev):
@@ -94,24 +94,7 @@ class HessianLossNormCos(nn.Module):
 class HessianLossSoftCos(nn.Module):
     def forward(self, lam, module, next_modules, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
         
-        # Legacy part with calculations
-
         H = hessians[module]
-
-        # try:
-        #     h = H + lam * apply_conv(H_next, mode=kernel_mode)
-        #     h = (h + h.T) / 2
-        #     h = h + reg_coef * torch.eye(h.shape[0], device=h.device, dtype=h.dtype)
-        # except RuntimeError:
-        #     return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
-
-        # try:
-        #     U, S, Vh = torch.linalg.svd(h, full_matrices=False)
-        #     eigenvalues = S
-        #     eigenvectors = U
-        #     # eigenvalues, eigenvectors = torch.linalg.eigh(h)
-        # except:
-        #     return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
 
         dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
 
@@ -223,6 +206,34 @@ class HessianLossSoftCos(nn.Module):
         loss = cos_sim - 0.05 * balance_penalty
         
         return loss, sorted_eigenvalues
+
+
+class HessianLossTrace(nn.Module):
+    def forward(self, lam, module, next_modules, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
+        
+        H = hessians[module]
+
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
+
+        try:
+            is_lam = False
+
+            for i, module_next in enumerate(next_modules):
+                if module_next is not None:
+                    H_next = hessians[module]
+                    if H.shape == H_next.shape:
+                        is_lam = True
+                        H += lam[i] * H_next
+
+            if not is_lam:
+                return dummy_loss, None
+        
+            trace = torch.sum(torch.diag(H))
+
+        except RuntimeError:
+            return dummy_loss, None
+
+        return trace
 
 
 

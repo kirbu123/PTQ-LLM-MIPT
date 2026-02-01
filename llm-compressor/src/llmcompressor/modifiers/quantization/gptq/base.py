@@ -43,6 +43,7 @@ from llmcompressor.utils.loss import (
     HessianLossNormed,
     HessianLossNormCos,
     HessianLossSoftCos,
+    HessianLossTrace,
     HessianLossSoftCosOptimized
 )
 
@@ -54,6 +55,7 @@ LOSS_DICT = {
     'HessianLossNormed': HessianLossNormed,
     'HessianLossNormCos': HessianLossNormCos,
     'HessianLossSoftCos': HessianLossSoftCos,
+    'HessianLossTrace': HessianLossTrace,
     'HessianLossSoftCosOptimized': HessianLossSoftCosOptimized
 }
 
