@@ -119,9 +119,20 @@ class HessianLossSoftCos(nn.Module):
             eigenvalues = eigenvals[module]
             eigenvectors = eigenvects[module]
 
+            is_lam = False
+
             for i, module_next in enumerate(next_modules):
-                eigenvalues += lam[i] * eigenvals[module_next]
-                eigenvectors += lam[i] * eigenvects[module_next]
+                if module_next is not None:
+                    if (eigenvalues.shape == eigenvals[module_next].shape and 
+                        eigenvectors.shape == eigenvects[module_next].shape):
+
+                        is_lam = True
+                        eigenvalues += lam[i] * eigenvals[module_next]
+                        eigenvectors += lam[i] * eigenvects[module_next]
+
+            if not is_lam:
+                return dummy_loss, None
+
         except RuntimeError:
             return dummy_loss, None
 

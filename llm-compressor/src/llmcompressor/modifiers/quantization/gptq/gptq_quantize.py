@@ -342,8 +342,9 @@ def quantize_weight(
     if next_modules is not None and lam_tensor is not None:
         try:
             for i, module_next in enumerate(next_modules):
-                H_next = hessians_dict[module_next]
-                H += lam_tensor[i] * apply_conv(H_next, mode=kernel_mode)
+                if module_next is not None:
+                    H_next = hessians_dict[module_next]
+                    H += lam_tensor[i] * apply_conv(H_next, mode=kernel_mode)
         except RuntimeError:
             pass
 

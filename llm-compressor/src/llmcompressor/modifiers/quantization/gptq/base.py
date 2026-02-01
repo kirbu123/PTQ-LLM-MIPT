@@ -8,6 +8,7 @@ import datetime
 
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import LRScheduler
 
 from compressed_tensors.quantization import (
     QuantizationConfig,
@@ -159,6 +160,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     # Add these as PrivateAttr since they're not serializable/model fields
     _lam_tensor: torch.nn.Parameter = PrivateAttr()
     _lam_optimizer: torch.optim.Optimizer = PrivateAttr()
+    _lam_scheduler: Optional[LRScheduler] = PrivateAttr()
     _lam_loss = PrivateAttr()
     _step_num: int = PrivateAttr()
 
@@ -227,6 +229,10 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 requires_grad=True
             )
             self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+            self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self._lam_optimizer, 
+                    T_max=self.opt_steps_num,
+                )
             self._lam_loss = LOSS_DICT[self.lam_loss_name]()
             self._step_num = 0
 
@@ -393,9 +399,16 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     loss_reg.backward(retain_graph=True)
 
                     self._lam_optimizer.step()
+                    self._lam_scheduler.step()
 
-            self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num)
-            self._log_writer.add_scalar('lam-param', torch.mean(self._lam_tensor).item(), self._step_num)
+                    current_lr = self._lam_optimizer.param_groups[0]['lr']
+                    self._log_writer.add_scalar('lam-lr', current_lr, self._step_num*self.opt_steps_num + i)
+                    self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num*self.opt_steps_num + i)
+
+            self._log_writer.add_scalar('mean-lam-param', torch.mean(self._lam_tensor).item(), self._step_num)
+            for i in range(len(self._lam_tensor)):
+                self._log_writer.add_scalar(f'lam-param-dim-{i}', self._lam_tensor[i].item(), self._step_num)
+
             if sorted_eigens is not None:
                 max_plot_values = min(10000, len(sorted_eigens))
                 for idx in range(max_plot_values):
@@ -406,7 +419,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                         idx
                     )
 
-        self._step_num += 1
+            self._step_num += 1
 
         return 0
 
@@ -430,18 +443,13 @@ class GPTQModifier(Modifier, QuantizationMixin):
             start_idx = i + 1
             end_idx = i + 1 + self.k_next
             next_modules = []
-            is_none = False
 
             for j in range(start_idx, end_idx):
                 if j < len(keys_list):
                     next_modules.append(keys_list[j])
                 else:
                     next_modules.append(None)
-                    is_none = True
 
-            # module_next = next(islice(keys_list, i+1, i+2), None)
-
-            if is_none: next_modules = None
 
             logger.info(f"Optimiting lam using {self.opt_steps_num} iterations")
             if self.lam_optimize:
