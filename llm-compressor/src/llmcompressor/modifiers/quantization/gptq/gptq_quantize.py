@@ -14,6 +14,7 @@ from loguru import logger
 
 from llmcompressor.modifiers.utils import SPARSITY_THRESHOLD
 from llmcompressor.modifiers.utils.kernels import apply_conv
+from llmcompressor.modifiers.utils.eigen_count import compute_max_eigenval
 from llmcompressor.observers.base import Observer
 from llmcompressor.pytorch.utils.helpers import tensor_sparsity
 
@@ -37,6 +38,7 @@ def accumulate_hessian(
     module: torch.nn.Module,
     H: torch.Tensor | None,
     num_samples: int,
+    with_eigens: bool = True
 ) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]:
     inp = inp.to(device=H.device)
     if len(inp.shape) == 2:
@@ -68,100 +70,30 @@ def accumulate_hessian(
     H += inp.matmul(inp.t())
 
     # Eigenvalues and eigenvectors calculation
+    eigenvalues, eigenvectors = None, None
     h = (H + H.T) / 2
-    U, S, Vh = torch.linalg.svd(h, full_matrices=False)
 
-    eigenvalues = S
-    eigenvectors = U
+    if with_eigens:
+        U, S, Vh = torch.linalg.svd(h, full_matrices=False)
+
+        eigenvalues = S
+        eigenvectors = U
+
+    hessian_trace = torch.trace(H)
+    eigenvalues_max = compute_max_eigenval(h)
+
+    eigens = {
+        "eigenvalues": eigenvalues,
+        "eigenvectors": eigenvectors,
+        "eigenvalues_max": eigenvalues_max,
+        "hessian_trace": hessian_trace
+    }
 
     # DEBUG
     # eigenvalues = torch.full((H.shape[0],), 1e-5, dtype=H.dtype, device=H.device)
     # eigenvectors = torch.full(H.shape, 1e-5, dtype=H.dtype, device=H.device)
 
-    return H, num_samples, eigenvalues, eigenvectors
-
-
-# def accumulate_hessian_next_reg(
-#     inp: torch.Tensor,
-#     inp_next: torch.Tensor | None,
-#     module: torch.nn.Module,
-#     module_next: torch.nn.Module | None,
-#     H: torch.Tensor | None,
-#     num_samples: int,
-#     next_loss_lam: float,
-#     kernel_mode: str = 'default'
-# ) -> tuple[torch.Tensor, int]:
-#     inp = inp.to(device=H.device)
-    
-#     if len(inp.shape) == 2:
-#         inp = inp.unsqueeze(0)
-
-#     num_added = inp.shape[0]
-
-#     # Process input for current module
-#     match module:
-#         case torch.nn.Linear() | transformers.Conv1D():
-#             if len(inp.shape) == 3:
-#                 inp = inp.reshape((-1, inp.shape[-1]))
-#             inp = inp.t()
-#         case torch.nn.Conv2d():
-#             unfold = torch.nn.Unfold(
-#                 module.kernel_size,
-#                 dilation=module.dilation,
-#                 padding=module.padding,
-#                 stride=module.stride,
-#             )
-#             inp = unfold(inp)
-#             inp = inp.permute([1, 0, 2])
-#             inp = inp.flatten(1)
-
-#     # Process input for next module if it exists
-#     inp_next_processed = None
-#     if inp_next is not None and module_next is not None and next_loss_lam != 0:
-#         inp_next = inp_next.to(device=H.device)
-#         if len(inp_next.shape) == 2:
-#             inp_next = inp_next.unsqueeze(0)
-
-#         match module_next:
-#             case torch.nn.Linear() | transformers.Conv1D():
-#                 if len(inp_next.shape) == 3:
-#                     inp_next = inp_next.reshape((-1, inp_next.shape[-1]))
-#                 inp_next_processed = inp_next.t()
-#             case torch.nn.Conv2d():
-#                 unfold = torch.nn.Unfold(
-#                     module_next.kernel_size,
-#                     dilation=module_next.dilation,
-#                     padding=module_next.padding,
-#                     stride=module_next.stride,
-#                 )
-#                 inp_next_processed = unfold(inp_next)
-#                 inp_next_processed = inp_next_processed.permute([1, 0, 2])
-#                 inp_next_processed = inp_next_processed.flatten(1)
-
-#     # Update Hessian
-#     H *= num_samples / (num_samples + num_added)
-#     num_samples += num_added
-
-#     inp = inp.to(dtype=GPTQ_PRECISION)
-#     inp = math.sqrt(2 / num_samples) * inp
-
-#     # Combine current and next inputs if available
-#     if inp_next_processed is not None:
-#         inp_next_processed = inp_next_processed.to(dtype=GPTQ_PRECISION)
-#         inp_next_processed = math.sqrt(2 / num_samples) * inp_next_processed
-#         try:
-#             inp_all = inp + next_loss_lam * apply_conv(inp_next_processed, mode=kernel_mode)
-#         except RuntimeError:
-#             inp_all = inp
-#     else:
-#         inp_all = inp
-
-#     # Update Hessian with combined input
-#     # H[:inp_all.shape[0], :inp_all.shape[1]] += inp_all.matmul(inp_all.t())
-
-#     H += inp_all.matmul(inp_all.t())
-
-#     return H, num_samples
+    return H, num_samples, eigens
 
 
 def accumulate_hessian_next_reg(

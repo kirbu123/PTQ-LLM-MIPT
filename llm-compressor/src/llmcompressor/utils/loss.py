@@ -1,17 +1,45 @@
 import torch
 import torch.nn as nn
 from llmcompressor.modifiers.utils.kernels import apply_conv
+from abc import abstractmethod
 
-__all__ = ["LambdaLoss", "HessianLossNormed", "HessianLoss", "HessianLossNormCos", "HessianLossSoftCos", "HessianLossSoftCosOptimized", "HessianLossTrace"]
+__all__ = ["HessianLossNormed", "HessianLoss", "HessianLossNormCos", "HessianLossSoftCos", "HessianLossTrace"]
 
-class LambdaLoss(nn.Module):
-    def forward(self, lam, curr, prev):
-        # Returns a tensor connected to 'lam' for autograd
-        return prev + 2 * lam
+class BasicLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
 
-class HessianLoss(nn.Module):
-    def forward(self, lam, H, H_next, kernel_mode):
+    def get_with_eigens(self):
+        return self.with_eigens
+
+    @abstractmethod
+    def forward(self,
+                lam,
+                module,
+                next_modules,
+                hessians,
+                eigens,
+                kernel_mode
+                ):
+        pass
+
+class HessianLoss(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
+
+    def forward(self,
+                lam,
+                module,
+                next_modules,
+                hessians,
+                eigens,
+                kernel_mode
+                ):
         try:
+            H = hessians[module]
+            H_next = hessians[next_modules[0]]
             h = H + lam * apply_conv(H_next, mode=kernel_mode)
             h = (h + h.T) / 2
         except RuntimeError:
@@ -26,9 +54,22 @@ class HessianLoss(nn.Module):
         else:
             return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), sorted_eigenvalues
 
-class HessianLossNormed(nn.Module):
-    def forward(self, lam, H, H_next, kernel_mode):
+class HessianLossNormed(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
+
+    def forward(self,
+                lam,
+                module,
+                next_modules,
+                hessians,
+                eigens,
+                kernel_mode
+                ):
         try:
+            H = hessians[module]
+            H_next = hessians[next_modules[0]]
             h = H + lam * apply_conv(H_next, mode=kernel_mode)
             h = (h + h.T) / 2
         except RuntimeError:
@@ -45,9 +86,22 @@ class HessianLossNormed(nn.Module):
             return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), sorted_eigenvalues
 
 
-class HessianLossNormCos(nn.Module):
-    def forward(self, lam, H, H_next, kernel_mode):
+class HessianLossNormCos(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
+
+    def forward(self,
+                lam,
+                module,
+                next_modules,
+                hessians,
+                eigens,
+                kernel_mode
+                ):
         try:
+            H = hessians[module]
+            H_next = hessians[next_modules[0]]
             h = H + lam * apply_conv(H_next, mode=kernel_mode)
             h = (h + h.T) / 2
             
@@ -91,10 +145,24 @@ class HessianLossNormCos(nn.Module):
             # Return small loss if eigendecomposition still fails
             return torch.tensor(0.01, dtype=torch.float32, device=H.device, requires_grad=True), sorted_eigenvalues
 
-class HessianLossSoftCos(nn.Module):
-    def forward(self, lam, module, next_modules, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
-        
+class HessianLossSoftCos(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
+
+    def forward(self,
+                lam,
+                module,
+                next_modules,
+                hessians,
+                eigens,
+                kernel_mode
+                ):
+        eps = 1e-8
         H = hessians[module]
+
+        eigenvals = eigens[module]['eigenvalues']
+        eigenvects = eigens[module]['eigenvectors']
 
         dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
 
@@ -208,146 +276,52 @@ class HessianLossSoftCos(nn.Module):
         return loss, sorted_eigenvalues
 
 
-class HessianLossTrace(nn.Module):
-    def forward(self, lam, module, next_modules, hessians, eigenvals, eigenvects, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
-        
-        H = hessians[module]
+class HessianLossTrace(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = False
 
+    def forward(self,
+                lam,
+                module,
+                next_modules,
+                hessians,
+                eigens,
+                kernel_mode
+                ):
+        trace = eigens[module]['hessian_trace']
+        H = hessians[module]
         dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
+        max_eigen_val = torch.tensor(eigens[module]['eigenvalues_max'], dtype=torch.float32, device=H.device, requires_grad=True)
 
         try:
             is_lam = False
 
             for i, module_next in enumerate(next_modules):
                 if module_next is not None:
-                    H_next = hessians[module]
-                    if H.shape == H_next.shape:
-                        is_lam = True
-                        H += lam[i] * H_next
+                    is_lam = True
+                    trace += lam[i] * eigens[module_next]['hessian_trace']
+                    max_eigen_val += lam[i] * eigens[module_next]['eigenvalues_max']
 
             if not is_lam:
                 return dummy_loss, None
-        
-            trace = torch.sum(torch.diag(H))
 
-        except RuntimeError:
+            # Make sure it's a scalar with gradient
+            trace = trace.clone().detach().requires_grad_(True)
+            max_eigen_val = max_eigen_val.clone().detach().requires_grad_(True)
+
+        except Exception:
             return dummy_loss, None
 
-        return trace
+        loss = trace + max_eigen_val
+        return loss, None
 
 
-
-class HessianLossSoftCosOptimized(nn.Module):
-    def __init__(self, cache_size=100):
-        super().__init__()
-        self.cache = {}
-        self.cache_size = cache_size
-        
-    def forward(self, lam, H, H_next, kernel_mode, eps=1e-8, proj_dim=10, reg_coef=1e-3, neg_weight=0.1):
-        # 1. Cache check
-        cache_key = (lam.item() if torch.is_tensor(lam) else lam, 
-                    H.shape, kernel_mode, proj_dim)
-        
-        if cache_key in self.cache:
-            return self.cache[cache_key]
-            
-        # 2. Matrix combination
-        device = H.device
-        try:
-            h = torch.add(H, lam * apply_conv(H_next, mode=kernel_mode))
-        except RuntimeError:
-            return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
-
-        h = (h + h.T) * 0.5  # Multiplication faster than division
-        eye = torch.eye(h.shape[0], device=device, dtype=h.dtype)
-        h.add_(eye, alpha=reg_coef)
-        
-        # 3. Eigen decomposition - compute only needed components
-        n_components = min(50, h.shape[0])
-        
-        try:  # Use randomized SVD for large matrices
-            U, S, Vh = torch.svd_lowrank(h, q=n_components + 20)
-        except:
-            return torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True), None
-
-        # Take only needed components
-        eigenvalues = S[:n_components]
-        eigenvectors = U[:, :n_components]
-        
-        if eigenvalues.shape[0] < 2:
-            result = (torch.tensor(0.0, device=device, requires_grad=True), eigenvalues)
-            self._update_cache(cache_key, result)
-            return result
-        
-        # 4. Separate positive and negative eigenvalues
-        pos_mask = eigenvalues > 0
-        neg_mask = eigenvalues < 0
-        has_pos = torch.any(pos_mask)
-        has_neg = torch.any(neg_mask)
-        
-        if not has_neg:
-            # Create pseudo-negative
-            min_val, min_idx = torch.min(eigenvalues, dim=0)
-            neg_eigenvalues = -torch.abs(min_val) * neg_weight
-            neg_eigenvectors = eigenvectors[:, min_idx:min_idx+1]
-            pos_eigenvalues = eigenvalues[pos_mask]
-            pos_eigenvectors = eigenvectors[:, pos_mask]
-        elif not has_pos:
-            # Create pseudo-positive
-            max_val, max_idx = torch.max(eigenvalues, dim=0)
-            pos_eigenvalues = torch.abs(max_val) * neg_weight
-            pos_eigenvectors = eigenvectors[:, max_idx:max_idx+1]
-            neg_eigenvalues = eigenvalues[neg_mask]
-            neg_eigenvectors = eigenvectors[:, neg_mask]
-        else:
-            pos_eigenvalues = eigenvalues[pos_mask]
-            pos_eigenvectors = eigenvectors[:, pos_mask]
-            neg_eigenvalues = eigenvalues[neg_mask]
-            neg_eigenvectors = eigenvectors[:, neg_mask]
-        
-        # 5. Weight computation with numerical stability
-        pos_sum_abs = torch.sum(torch.abs(pos_eigenvalues))
-        pos_weights = pos_eigenvalues / (pos_sum_abs + eps) if pos_sum_abs > 0 \
-                     else torch.ones_like(pos_eigenvalues) / len(pos_eigenvalues)
-        
-        neg_sum_abs = torch.sum(torch.abs(neg_eigenvalues))
-        neg_weights = neg_eigenvalues / (neg_sum_abs + eps) if neg_sum_abs > 0 \
-                     else torch.ones_like(neg_eigenvalues) / len(neg_eigenvalues)
-        
-        # 6. Vector combination (efficient matrix multiplication)
-        pos_vector = pos_eigenvectors @ pos_weights.unsqueeze(-1)
-        neg_vector = neg_eigenvectors @ neg_weights.unsqueeze(-1)
-        
-        # 7. Projection (common subspace)
-        k = min(proj_dim, eigenvectors.shape[1])
-        common_basis = eigenvectors[:, :k]
-        
-        pos_proj = common_basis.T @ pos_vector
-        neg_proj = common_basis.T @ neg_vector
-        
-        pos_vector = common_basis @ pos_proj
-        neg_vector = common_basis @ neg_proj
-        
-        # 8. Cosine similarity
-        pos_norm = torch.norm(pos_vector) + eps
-        neg_norm = torch.norm(neg_vector) + eps
-        cos_sim = torch.abs(torch.dot(pos_vector.squeeze(), neg_vector.squeeze()) / (pos_norm * neg_norm))
-        
-        # 9. Balance penalty
-        mean_pos_abs = torch.mean(torch.abs(pos_eigenvalues))
-        mean_neg_abs = torch.mean(torch.abs(neg_eigenvalues))
-        mean_all_abs = torch.mean(torch.abs(eigenvalues))
-        
-        balance_penalty = torch.abs(mean_pos_abs - mean_neg_abs) / (mean_all_abs + eps)
-        
-        loss = cos_sim - 0.05 * balance_penalty
-        
-        result = (loss, eigenvalues)
-        self._update_cache(cache_key, result)
-        return result
-    
-    def _update_cache(self, key, value):
-        if len(self.cache) >= self.cache_size:
-            # Remove oldest entry
-            del self.cache[next(iter(self.cache))]
-        self.cache[key] = value
+LOSS_DICT = {
+    'HessianLoss': HessianLoss,
+    'HessianLossNormed': HessianLossNormed,
+    'HessianLossNormCos': HessianLossNormCos,
+    'HessianLossSoftCos': HessianLossSoftCos,
+    'HessianLossTrace': HessianLossTrace,
+}
+ 

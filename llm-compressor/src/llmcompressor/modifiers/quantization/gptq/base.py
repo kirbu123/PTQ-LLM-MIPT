@@ -37,27 +37,9 @@ from llmcompressor.modifiers.quantization.gptq.gptq_quantize import (
 from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
-from llmcompressor.utils.loss import (
-    LambdaLoss,
-    HessianLoss,
-    HessianLossNormed,
-    HessianLossNormCos,
-    HessianLossSoftCos,
-    HessianLossTrace,
-    HessianLossSoftCosOptimized
-)
+from llmcompressor.utils.loss import LOSS_DICT
 
 from torch.utils.tensorboard import SummaryWriter
-
-LOSS_DICT = {
-    'LambdaLoss': LambdaLoss,
-    'HessianLoss': HessianLoss,
-    'HessianLossNormed': HessianLossNormed,
-    'HessianLossNormCos': HessianLossNormCos,
-    'HessianLossSoftCos': HessianLossSoftCos,
-    'HessianLossTrace': HessianLossTrace,
-    'HessianLossSoftCosOptimized': HessianLossSoftCosOptimized
-}
 
 __all__ = ["GPTQModifier"]
 
@@ -146,9 +128,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
     actorder: Optional[Union[ActivationOrdering, Sentinel]] = Sentinel("static")
     offload_hessians: bool = False
 
-    next_reg_lam: float = 0.0  # New parameter
-    next_loss_lam: float = 0.0  # New parameter
-    kernel_mode: str = 'default' # New parameter
+    next_reg_lam: float = 0.0
+    next_loss_lam: float = 0.0
+    kernel_mode: str = 'default'
     lam_lr: float = 3e-4
     lam_loss_name: str = 'HessianLossNormed'
     opt_steps_num: int = 10
@@ -160,6 +142,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     _log_writer: SummaryWriter = PrivateAttr()
 
     # Add these as PrivateAttr since they're not serializable/model fields
+    _with_eigens: bool = PrivateAttr()
     _lam_tensor: torch.nn.Parameter = PrivateAttr()
     _lam_optimizer: torch.optim.Optimizer = PrivateAttr()
     _lam_scheduler: Optional[LRScheduler] = PrivateAttr()
@@ -170,8 +153,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
     _hessians: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
     _num_samples: Dict[torch.nn.Module, int] = PrivateAttr(default_factory=dict)
-    _eigenvals: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
-    _eigenvects: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
+    # _eigenvals: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
+    # _eigenvects: Dict[torch.nn.Module, torch.Tensor] = PrivateAttr(default_factory=dict)
+    _eigens: Dict = PrivateAttr(default_factory=dict)
 
     def resolve_quantization_config(self) -> QuantizationConfig:
         config = super().resolve_quantization_config()
@@ -236,6 +220,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     T_max=self.opt_steps_num,
                 )
             self._lam_loss = LOSS_DICT[self.lam_loss_name]()
+            self._with_eigens = self._lam_loss.get_with_eigens()
             self._step_num = 0
 
         return True
@@ -346,43 +331,38 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         # Accumulate hessian with input with optional offloading
         with self._maybe_onload_hessian(module):
-            # if self.next_loss_lam == 0.:
-            #     self._hessians[module], self._num_samples[module], self._eigenvals[module], self._eigenvects[module] = accumulate_hessian(
-            #         inp,
-            #         module,
-            #         self._hessians[module],
-            #         self._num_samples[module],
-            #     )
-            # else:
-            #     self._hessians[module], self._num_samples[module] = accumulate_hessian_next_reg(
-            #         inp,
-            #         inp_next,
-            #         module,
-            #         module_next,
-            #         self._hessians[module],
-            #         self._num_samples[module],
-            #         self.next_loss_lam,
-            #         kernel_mode = self.kernel_mode
-            #     )
-
-            self._hessians[module], self._num_samples[module], self._eigenvals[module], self._eigenvects[module] = accumulate_hessian(
+            self._hessians[module], self._num_samples[module], eigens = accumulate_hessian(
                 inp,
                 module,
                 self._hessians[module],
                 self._num_samples[module],
+                self._with_eigens
             )
+
+            # self._eigenvals[module], self._eigenvects[module] = eigens['eigenvalues'], eigens['eigenvectors']
+            self._eigens[module] = eigens
+
 
     def _update_lam_param(self, lam_loss, module, next_modules):
         if next_modules is not None:
 
             device = self._hessians[module].device
+            module_name = self._module_names[module]
 
             if self._lam_tensor.device != device:
                 self._lam_tensor = self._lam_tensor.to(device)
-                self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+
+            self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+            self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self._lam_optimizer, 
+                T_max=self.opt_steps_num,
+            )
 
             if not self._lam_tensor.requires_grad:
                 self._lam_tensor.requires_grad_(True)
+
+            init_sorted_eigens = None
+            last_sorted_eigens = None
 
             with torch.enable_grad():
                 for i in range(self.opt_steps_num):
@@ -393,10 +373,12 @@ class GPTQModifier(Modifier, QuantizationMixin):
                         module=module,
                         next_modules=next_modules,
                         hessians=self._hessians,
-                        eigenvals=self._eigenvals,
-                        eigenvects=self._eigenvects,
+                        eigens=self._eigens,
                         kernel_mode=self.kernel_mode
                     )
+
+                    if i == 0: init_sorted_eigens = sorted_eigens
+                    if sorted_eigens is not None: last_sorted_eigens = sorted_eigens
 
                     loss_reg.backward(retain_graph=True)
 
@@ -411,12 +393,18 @@ class GPTQModifier(Modifier, QuantizationMixin):
             for i in range(len(self._lam_tensor)):
                 self._log_writer.add_scalar(f'lam-param-dim-{i}', self._lam_tensor[i].item(), self._step_num)
 
-            if sorted_eigens is not None:
-                max_plot_values = min(10000, len(sorted_eigens))
+            if init_sorted_eigens is not None and last_sorted_eigens is not None:
+                max_plot_values = min(min(10000, len(init_sorted_eigens)), len(last_sorted_eigens))
                 for idx in range(max_plot_values):
-                    eigenvalue = sorted_eigens[idx].item()
+                    eigenvalue = init_sorted_eigens[idx].item()
                     self._log_writer.add_scalar(
-                        f'eigenvalue-spectr/{self._step_num}',
+                        f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init',
+                        eigenvalue,
+                        idx
+                    )
+                    eigenvalue = last_sorted_eigens[idx].item()
+                    self._log_writer.add_scalar(
+                        f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last',
                         eigenvalue,
                         idx
                     )
