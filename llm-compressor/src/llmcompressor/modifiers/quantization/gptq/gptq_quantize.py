@@ -79,8 +79,14 @@ def accumulate_hessian(
         eigenvalues = S
         eigenvectors = U
 
+        # DEBUG
+        # eigenvalues = torch.full((H.shape[0],), 1e-5, dtype=H.dtype, device=H.device)
+        # eigenvectors = torch.full(H.shape, 1e-5, dtype=H.dtype, device=H.device)
+
+
     hessian_trace = torch.trace(H)
     eigenvalues_max = compute_max_eigenval(h)
+    eigenvalues_max = torch.tensor(eigenvalues_max, dtype=torch.float32, device=H.device, requires_grad=True)
 
     eigens = {
         "eigenvalues": eigenvalues,
@@ -88,10 +94,6 @@ def accumulate_hessian(
         "eigenvalues_max": eigenvalues_max,
         "hessian_trace": hessian_trace
     }
-
-    # DEBUG
-    # eigenvalues = torch.full((H.shape[0],), 1e-5, dtype=H.dtype, device=H.device)
-    # eigenvectors = torch.full(H.shape, 1e-5, dtype=H.dtype, device=H.device)
 
     return H, num_samples, eigens
 

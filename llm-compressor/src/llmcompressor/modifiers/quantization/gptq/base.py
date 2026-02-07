@@ -389,6 +389,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     self._log_writer.add_scalar('lam-lr', current_lr, self._step_num*self.opt_steps_num + i)
                     self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num*self.opt_steps_num + i)
 
+                    lam = self._lam_tensor
+
             self._log_writer.add_scalar('mean-lam-param', torch.mean(self._lam_tensor).item(), self._step_num)
             for i in range(len(self._lam_tensor)):
                 self._log_writer.add_scalar(f'lam-param-dim-{i}', self._lam_tensor[i].item(), self._step_num)

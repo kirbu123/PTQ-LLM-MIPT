@@ -14,14 +14,18 @@ class BasicLoss(nn.Module):
         return self.with_eigens
 
     @abstractmethod
-    def forward(self,
-                lam,
-                module,
-                next_modules,
-                hessians,
-                eigens,
-                kernel_mode
-                ):
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
         pass
 
 class HessianLoss(BasicLoss):
@@ -29,14 +33,18 @@ class HessianLoss(BasicLoss):
         super().__init__()
         self.with_eigens = True
 
-    def forward(self,
-                lam,
-                module,
-                next_modules,
-                hessians,
-                eigens,
-                kernel_mode
-                ):
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
         try:
             H = hessians[module]
             H_next = hessians[next_modules[0]]
@@ -59,14 +67,18 @@ class HessianLossNormed(BasicLoss):
         super().__init__()
         self.with_eigens = True
 
-    def forward(self,
-                lam,
-                module,
-                next_modules,
-                hessians,
-                eigens,
-                kernel_mode
-                ):
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
         try:
             H = hessians[module]
             H_next = hessians[next_modules[0]]
@@ -91,14 +103,18 @@ class HessianLossNormCos(BasicLoss):
         super().__init__()
         self.with_eigens = True
 
-    def forward(self,
-                lam,
-                module,
-                next_modules,
-                hessians,
-                eigens,
-                kernel_mode
-                ):
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
         try:
             H = hessians[module]
             H_next = hessians[next_modules[0]]
@@ -149,37 +165,39 @@ class HessianLossSoftCos(BasicLoss):
     def __init__(self):
         super().__init__()
         self.with_eigens = True
+        
 
-    def forward(self,
-                lam,
-                module,
-                next_modules,
-                hessians,
-                eigens,
-                kernel_mode
-                ):
-        eps = 1e-8
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
+
         H = hessians[module]
-
-        eigenvals = eigens[module]['eigenvalues']
-        eigenvects = eigens[module]['eigenvectors']
 
         dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
 
         try:
-            eigenvalues = eigenvals[module]
-            eigenvectors = eigenvects[module]
+            eigenvalues = eigens[module]['eigenvalues']
+            eigenvectors = eigens[module]['eigenvectors']
 
             is_lam = False
 
             for i, module_next in enumerate(next_modules):
                 if module_next is not None:
-                    if (eigenvalues.shape == eigenvals[module_next].shape and 
-                        eigenvectors.shape == eigenvects[module_next].shape):
+                    if (eigenvalues.shape == eigens[module_next]['eigenvalues'].shape and 
+                        eigenvectors.shape == eigens[module_next]['eigenvectors'].shape):
 
                         is_lam = True
-                        eigenvalues += lam[i] * eigenvals[module_next]
-                        eigenvectors += lam[i] * eigenvects[module_next]
+                        eigenvalues += lam[i] * eigens[module_next]['eigenvalues']
+                        eigenvectors += lam[i] * eigens[module_next]['eigenvectors']
 
             if not is_lam:
                 return dummy_loss, None
@@ -281,40 +299,79 @@ class HessianLossTrace(BasicLoss):
         super().__init__()
         self.with_eigens = False
 
-    def forward(self,
-                lam,
-                module,
-                next_modules,
-                hessians,
-                eigens,
-                kernel_mode
-                ):
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
+
         trace = eigens[module]['hessian_trace']
         H = hessians[module]
         dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
-        max_eigen_val = torch.tensor(eigens[module]['eigenvalues_max'], dtype=torch.float32, device=H.device, requires_grad=True)
+        max_eigen_val = eigens[module]['eigenvalues_max']
 
-        try:
-            is_lam = False
+        # try:
+        is_lam = False
 
-            for i, module_next in enumerate(next_modules):
-                if module_next is not None:
-                    is_lam = True
-                    trace += lam[i] * eigens[module_next]['hessian_trace']
-                    max_eigen_val += lam[i] * eigens[module_next]['eigenvalues_max']
+        for i, module_next in enumerate(next_modules):
+            if module_next is not None:
+                is_lam = True
+                trace += lam[i] * eigens[module_next]['hessian_trace']
+                max_eigen_val = max_eigen_val + lam[i] * eigens[module_next]['eigenvalues_max']
 
-            if not is_lam:
-                return dummy_loss, None
-
-            # Make sure it's a scalar with gradient
-            trace = trace.clone().detach().requires_grad_(True)
-            max_eigen_val = max_eigen_val.clone().detach().requires_grad_(True)
-
-        except Exception:
+        if not is_lam:
             return dummy_loss, None
 
-        loss = trace + max_eigen_val
+        loss = (trace + max_eigen_val) / 1000.
         return loss, None
+
+class HessianLossTraceScaled(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = False
+
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
+
+        trace = eigens[module]['hessian_trace']
+        H = hessians[module]
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
+        max_eigen_val = eigens[module]['eigenvalues_max']
+
+        # try:
+        is_lam = False
+
+        for i, module_next in enumerate(next_modules):
+            if module_next is not None:
+                is_lam = True
+                trace += lam[i] * eigens[module_next]['hessian_trace']
+                max_eigen_val = max_eigen_val + lam[i] * eigens[module_next]['eigenvalues_max']
+
+        if not is_lam:
+            return dummy_loss, None
+        
+        scale = 100 * (H.shape[0] + H.shape[1]) / 2
+
+        loss = (trace + max_eigen_val) / scale
+        return loss, None
+
 
 
 LOSS_DICT = {
@@ -323,5 +380,6 @@ LOSS_DICT = {
     'HessianLossNormCos': HessianLossNormCos,
     'HessianLossSoftCos': HessianLossSoftCos,
     'HessianLossTrace': HessianLossTrace,
+    'HessianLossTraceScaled': HessianLossTraceScaled
 }
  
