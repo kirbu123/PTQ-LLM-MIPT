@@ -373,6 +373,82 @@ class HessianLossTraceScaled(BasicLoss):
         return loss, None
 
 
+class HessianLossTraceOnlyScaled(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = False
+
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
+
+        trace = eigens[module]['hessian_trace']
+        H = hessians[module]
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
+
+        # try:
+        is_lam = False
+
+        for i, module_next in enumerate(next_modules):
+            if module_next is not None:
+                is_lam = True
+                trace += lam[i] * eigens[module_next]['hessian_trace']
+
+        if not is_lam:
+            return dummy_loss, None
+        
+        scale = 100 * (H.shape[0] + H.shape[1]) / 2
+
+        loss = (trace) / scale
+        return loss, None
+
+class HessianLossEigenMaxOnlyScaled(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = False
+
+    def forward(
+            self,
+            lam,
+            module,
+            next_modules,
+            hessians,
+            eigens,
+            kernel_mode,
+            eps=1e-8,
+            proj_dim=10,
+            reg_coef=1e-3,
+            neg_weight=0.1):
+
+        H = hessians[module]
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
+        max_eigen_val = eigens[module]['eigenvalues_max']
+
+        # try:
+        is_lam = False
+
+        for i, module_next in enumerate(next_modules):
+            if module_next is not None:
+                is_lam = True
+                max_eigen_val = max_eigen_val + lam[i] * eigens[module_next]['eigenvalues_max']
+
+        if not is_lam:
+            return dummy_loss, None
+        
+        scale = 100 * (H.shape[0] + H.shape[1]) / 2
+
+        loss = max_eigen_val / scale
+        return loss, None
+
 
 LOSS_DICT = {
     'HessianLoss': HessianLoss,
@@ -380,6 +456,7 @@ LOSS_DICT = {
     'HessianLossNormCos': HessianLossNormCos,
     'HessianLossSoftCos': HessianLossSoftCos,
     'HessianLossTrace': HessianLossTrace,
-    'HessianLossTraceScaled': HessianLossTraceScaled
+    'HessianLossTraceScaled': HessianLossTraceScaled,
+    'HessianLossTraceOnlyScaled': HessianLossTraceOnlyScaled,
+    'HessianLossEigenMaxOnlyScaled': HessianLossEigenMaxOnlyScaled
 }
- 

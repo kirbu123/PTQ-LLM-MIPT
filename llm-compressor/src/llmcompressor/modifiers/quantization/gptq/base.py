@@ -148,6 +148,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     _lam_scheduler: Optional[LRScheduler] = PrivateAttr()
     _lam_loss = PrivateAttr()
     _step_num: int = PrivateAttr()
+    _step_num_no_optimize: int = PrivateAttr()
 
     # private variables
     _module_names: Dict[torch.nn.Module, str] = PrivateAttr(default_factory=dict)
@@ -209,6 +210,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         log_path = os.path.join(self.log_dir, datetime.datetime.now().strftime('%Y%m%d_%H%M%S'))
         self._log_writer = SummaryWriter(log_dir=log_path)
 
+        self._step_num_no_optimize = 0
         if self.lam_optimize:
             self._lam_tensor = torch.nn.Parameter(
                 torch.full((self.k_next,), self.next_reg_lam, dtype=torch.float32),
@@ -222,6 +224,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
             self._lam_loss = LOSS_DICT[self.lam_loss_name]()
             self._with_eigens = self._lam_loss.get_with_eigens()
             self._step_num = 0
+        else:
+            self._lam_tensor = None
+            self._with_eigens = False
 
         return True
 
@@ -442,7 +447,13 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 else:
                     next_modules.append(None)
 
+            # log out-of-optimization params
+            hessian_trace = self._eigens[module]['hessian_trace']
+            eigenvalues_max = self._eigens[module]['eigenvalues_max']
+            self._log_writer.add_scalar(f'hessian_trace/module={name}', hessian_trace.item(), self._step_num_no_optimize)
+            self._log_writer.add_scalar(f'eigenvalue_max/module={name}', eigenvalues_max.item(), self._step_num_no_optimize)
 
+            # log optimization params
             logger.info(f"Optimiting lam using {self.opt_steps_num} iterations")
             if self.lam_optimize:
                 prev_loss = self._update_lam_param(
@@ -479,6 +490,8 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
             # self._hessians[module] already deleted by quantize_weight
             del self._num_samples[module]
+
+        self._step_num_no_optimize += 1
 
     def on_end(self, state: State, event: Event, **kwargs):
         """
