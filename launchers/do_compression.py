@@ -207,6 +207,7 @@ def evaluate_with_lm_eval(
 
 
 def quantize_model_by_oneshot(
+        model_base_path, dataset_base_path,
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
@@ -241,16 +242,26 @@ def quantize_model_by_oneshot(
             lam_loss_name=lam_loss_name
         )]
 
-    # Set variables using 
+    # Set dataset 
+    if dataset_base_path is not None:
+        dataset_path = os.path.join(dataset_base_path, dataset_name, dataset_subset)
+        dataset = load_dataset(dataset_path)
+    else:
+        dataset = load_dataset(dataset_name, dataset_subset)
+
+    # Set model
+    if model_base_path is not None:
+        model_path = os.path.join(model_base_path, model_name)
+    else:
+        model_path = model_name
+
     model = AutoModelForCausalLM.from_pretrained(
-        model_name
+        model_path
     )
 
     if 'gpt' in model_name.lower():
         model = convert_conv1d_to_linear(model, Conv1D)
-
-    dataset = load_dataset(dataset_name, dataset_subset)
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -276,6 +287,9 @@ def parse_args():
     # Model parameters
     parser.add_argument('--model_name', type=str, default='openai-community/gpt2-large',
                        help='HuggingFace model name or path')
+
+    parser.add_argument("--dataset_base_path", default=None, type=str, help='base dir path for dataset')
+    parser.add_argument("--model_base_path", default=None, type=str, help='base dir path for model')
     parser.add_argument('--dataset_name', type=str, default='wikitext',
                        help='Dataset name for calibration')
     parser.add_argument('--dataset_subset', type=str, default='wikitext-2-raw-v1',
@@ -340,6 +354,8 @@ if __name__ == "__main__":
 
     # Run llm-compressor quantization
     oneshot_model, teacher_model, model_name, model_output_path, dataset, tokenizer = quantize_model_by_oneshot(
+        model_base_path=args.model_base_path,
+        dataset_base_path=args.dataset_base_path,
         model_name=args.model_name,
         dataset_name=args.dataset_name,
         dataset_subset=args.dataset_subset,

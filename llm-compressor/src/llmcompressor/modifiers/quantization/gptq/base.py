@@ -426,6 +426,24 @@ class GPTQModifier(Modifier, QuantizationMixin):
         """
         keys_list = list(self._num_samples.keys())
 
+        mapped_lists = {
+            'names': {},
+            'modules': {}
+        }
+        for module in keys_list:
+            name = self._module_names[module]
+
+            postfix = name.split('.')[-1]
+            if postfix.startswith('fc'):
+                postfix = "fc"
+
+            if postfix not in mapped_lists['names']:  # Check for postfix key, not name
+                mapped_lists['names'][postfix] = [name]
+                mapped_lists['modules'][postfix] = [module]
+            else:
+                mapped_lists['names'][postfix].append(name)
+                mapped_lists['modules'][postfix].append(module)
+
         prev_loss = None
 
         if self.lam_optimize:
@@ -433,20 +451,33 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         for i, module in enumerate(list(self._num_samples.keys())):
             name = self._module_names[module]
+
             num_samples = self._num_samples[module]
             quant_args = getattr_chain(module, "quantization_scheme.weights")
 
             # Get k modules starting from position i+1
-            start_idx = i + 1
-            end_idx = i + 1 + self.k_next
             next_modules = []
 
+            postfix = name.split('.')[-1]
+            if postfix.startswith('fc'):
+                postfix = "fc"
+
+            name_list = mapped_lists['names'][postfix]
+            module_list = mapped_lists['modules'][postfix]
+
+            # try:
+            #     start_idx = int(name.split('.')[-2]) + 1
+            # except ValueError:
+            #     start_idx = int(name.split('.')[-3]) + 1
+            start_idx = name_list.index(name) + 1
+            end_idx = start_idx + self.k_next
+
             for j in range(start_idx, end_idx):
-                if j < len(keys_list):
-                    next_modules.append(keys_list[j])
+                if j < len(module_list):
+                    next_modules.append(module_list[j])
                 else:
                     next_modules.append(None)
-
+            
             # log out-of-optimization params
             hessian_trace = self._eigens[module]['hessian_trace']
             eigenvalues_max = self._eigens[module]['eigenvalues_max']
