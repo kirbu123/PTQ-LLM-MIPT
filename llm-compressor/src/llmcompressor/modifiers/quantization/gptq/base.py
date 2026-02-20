@@ -401,20 +401,38 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 self._log_writer.add_scalar(f'lam-param-dim-{i}', self._lam_tensor[i].item(), self._step_num)
 
             if init_sorted_eigens is not None and last_sorted_eigens is not None:
+
+                estimated_eigens = None
+                init_estimated_eigens, last_estimated_eigens = None, None
+                if isinstance(init_sorted_eigens, tuple):
+                    init_sorted_eigens, init_estimated_eigens = init_sorted_eigens
+                if isinstance(last_sorted_eigens, tuple):
+                    last_sorted_eigens, last_estimated_eigens = last_sorted_eigens
+
                 max_plot_values = min(min(10000, len(init_sorted_eigens)), len(last_sorted_eigens))
                 for idx in range(max_plot_values):
-                    eigenvalue = init_sorted_eigens[idx].item()
                     self._log_writer.add_scalar(
                         f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init',
-                        eigenvalue,
+                        init_sorted_eigens[idx].item(),
                         idx
                     )
-                    eigenvalue = last_sorted_eigens[idx].item()
                     self._log_writer.add_scalar(
                         f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last',
-                        eigenvalue,
+                        last_sorted_eigens[idx].item(),
                         idx
                     )
+                    if init_estimated_eigens is not None:
+                        self._log_writer.add_scalar(
+                            f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init-estimated',
+                            init_estimated_eigens[idx].item(),
+                            idx
+                        )
+                    if last_estimated_eigens is not None:
+                        self._log_writer.add_scalar(
+                            f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last-estimated',
+                            last_estimated_eigens[idx].item(),
+                            idx
+                        )
 
             self._step_num += 1
 
@@ -433,16 +451,19 @@ class GPTQModifier(Modifier, QuantizationMixin):
         for module in keys_list:
             name = self._module_names[module]
 
-            postfix = name.split('.')[-1]
-            if postfix.startswith('fc'):
-                postfix = "fc"
+            postfixes = [name.split('.')[-1]]
+            if postfixes[0] == "out_proj":
+                postfixes += ['q_proj', 'k_proj', 'v_proj']
 
-            if postfix not in mapped_lists['names']:  # Check for postfix key, not name
-                mapped_lists['names'][postfix] = [name]
-                mapped_lists['modules'][postfix] = [module]
-            else:
-                mapped_lists['names'][postfix].append(name)
-                mapped_lists['modules'][postfix].append(module)
+            for postfix in postfixes:
+                if postfix not in mapped_lists['names']:  # Check for postfix key, not name
+                    mapped_lists['names'][postfix] = [name]
+                    mapped_lists['modules'][postfix] = [module]
+                else:
+                    mapped_lists['names'][postfix].append(name)
+                    mapped_lists['modules'][postfix].append(module)
+            
+
 
         prev_loss = None
 
@@ -459,8 +480,6 @@ class GPTQModifier(Modifier, QuantizationMixin):
             next_modules = []
 
             postfix = name.split('.')[-1]
-            if postfix.startswith('fc'):
-                postfix = "fc"
 
             name_list = mapped_lists['names'][postfix]
             module_list = mapped_lists['modules'][postfix]

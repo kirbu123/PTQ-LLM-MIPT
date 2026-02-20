@@ -191,7 +191,7 @@ def accumulate_hessian_next_reg(
 
     # Для X' используем inp_processed
     X_prime = inp_processed
-    
+
     # Вычисляем дополнительные члены для нового гессиана
     if (inp_next_processed is not None and 
         weight_next is not None and 
