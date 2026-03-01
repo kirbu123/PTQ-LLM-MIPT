@@ -147,7 +147,10 @@ def trace_subgraphs(
     graph.device = model.device
 
     # perform subgraph partition
-    partitions = topological_partition(graph, targets)
+    # partitions = topological_partition(graph, targets)
+    group_size = 4
+    # group_size = len(targets) // 3
+    partitions = topological_partition_with_grouping(graph, targets, group_size=group_size)
     subgraphs = partition_graph(model, partitions)
     trace_consumed_names(subgraphs)
 
@@ -254,6 +257,77 @@ def find_target_nodes(graph: GraphModule, targets: Set[Module]) -> Set[Node]:
         if node.op == "call_module" and graph.get_submodule(node.target) in targets
     )
 
+def topological_partition_with_grouping(
+    graph: GraphModule, 
+    targets: Set[Module], 
+    group_size: int = 1
+) -> List[List[Node]]:
+    """
+    Partition the graph into partitions such that targets are grouped together
+    in groups of size `group_size`
+    """
+    assert graph_is_well_formed(graph.graph)
+    target_nodes = find_target_nodes(graph, targets)
+    
+    # Sort target nodes by their order in the graph
+    sorted_targets = sorted(target_nodes, key=lambda node: get_node_order(node, graph))
+    
+    # Group targets
+    target_groups = []
+    for i in range(0, len(sorted_targets), group_size):
+        target_groups.append(set(sorted_targets[i:i + group_size]))
+    
+    partitions: List[List[Node]] = [[]]
+    remaining_indegrees = {
+        node: len([node for node in node.all_input_nodes if node.op != "get_attr"])
+        for node in graph.graph.nodes
+    }
+    partition_index = 0
+    
+    queue = deque(
+        node
+        for node in graph.graph.nodes
+        if remaining_indegrees[node] == 0 and node.op != "get_attr"
+    )
+    
+    while len(queue) > 0:
+        node = queue.popleft()
+        partitions[partition_index].append(node)
+        
+        # Check if this node completes a target group
+        for group in target_groups:
+            if node in group:
+                group.remove(node)
+                if not group:  # Group is now empty - all targets in group processed
+                    partition_index += 1
+                    partitions.append([])
+                break
+        
+        for user in node.users:
+            remaining_indegrees[user] -= 1
+            if remaining_indegrees[user] == 0:
+                queue.append(user)
+    
+    # Handle get_attr nodes (same as original)
+    for node in graph.graph.find_nodes(op="get_attr"):
+        user_partitions = []
+        for user in node.users:
+            for index in range(len(partitions)):
+                if user in partitions[index]:
+                    user_partitions.append(index)
+                    break
+        if len(user_partitions):
+            partition_index = min(user_partitions)
+            partitions[partition_index].insert(0, node)
+    
+    return partitions
+
+def get_node_order(node: Node, graph: GraphModule) -> int:
+    """Helper to get the execution order of a node"""
+    for i, n in enumerate(graph.graph.nodes):
+        if n == node:
+            return i
+    return -1
 
 def topological_partition(graph: GraphModule, targets: Set[Module]) -> List[List[Node]]:
     """
@@ -432,11 +506,16 @@ def match_modules(model: Module, target_names: List[str]) -> Set[Module]:
     :param target_names: target patterns to find
     :return: all submodules matching `target_names`
     """
-    return set(
-        module
-        for name, module in model.named_modules()
-        if match_targets(name, module, target_names)
-    )
+    modules = []
+    for name, module in model.named_modules():
+        if match_targets(name, module, target_names):
+            modules.append(module)
+    return set(modules)
+    # return set(
+    #     module
+    #     for name, module in model.named_modules()
+    #     if match_targets(name, module, target_names)
+    # )
 
 
 def get_sequential_targets(

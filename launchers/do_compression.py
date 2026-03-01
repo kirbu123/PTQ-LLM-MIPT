@@ -212,7 +212,7 @@ def quantize_model_by_oneshot(
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
         hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, lam_lr=3e-4, k_next=1, opt_steps_num=10,
-        lam_loss_name='HessianLossNormed',
+        lam_loss_name='HessianLossNormed', next_strat_name='BasicStrat',
         seed=42
     ):
 
@@ -239,7 +239,8 @@ def quantize_model_by_oneshot(
             lam_lr=lam_lr,
             k_next=k_next,
             opt_steps_num=opt_steps_num,
-            lam_loss_name=lam_loss_name
+            lam_loss_name=lam_loss_name,
+            next_strat_name=next_strat_name,
         )]
 
     # Set dataset 
@@ -339,6 +340,8 @@ def parse_args():
                        help='Regularization lam parameter optimization lr')
     parser.add_argument('--lam_loss_name', type=str, default='HessianLossNormed',
                        help='Regularization lam parameter optimization loss name')
+    parser.add_argument('--next_strat_name', type=str, default='BasicStrat',
+                    help='Next strategy selection name for next strat')
 
     # Other parameters
     parser.add_argument('--seed', type=int, default=42,
@@ -378,6 +381,7 @@ if __name__ == "__main__":
         k_next=args.k_next,
         opt_steps_num=args.opt_steps_num,
         lam_loss_name=args.lam_loss_name,
+        next_strat_name=args.next_strat_name,
         seed=args.seed
     )
 

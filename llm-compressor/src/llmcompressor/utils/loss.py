@@ -770,6 +770,99 @@ class HessianLossCombined(BasicLoss):
         return loss, sorted_eigenvalues
 
 
+class ElboPowerLawLossTrunc(BasicLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
+        self.trunc_values = 35
+
+    def forward(
+        self,
+        lam,
+        module,
+        next_modules,
+        hessians,
+        eigens,
+        kernel_mode,
+        eps=1e-8
+    ):
+        H = hessians[module]
+        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
+
+        try:
+            # Get eigenvalues
+            eigenvalues = eigens[module]['eigenvalues']
+            is_lam = False
+            
+            # Combine with next modules
+            for i, module_next in enumerate(next_modules):
+                if module_next is not None:
+                    if eigenvalues.shape == eigens[module_next]['eigenvalues'].shape:
+                        is_lam = True
+                        eigenvalues = eigenvalues + lam[i] * eigens[module_next]['eigenvalues']
+
+            if not is_lam:
+                return dummy_loss, None
+
+        except RuntimeError:
+            return dummy_loss, None
+
+        # Truncate eigens
+        eigenvalues = eigenvalues[self.trunc_values:]
+
+        # Take absolute values and sort
+        abs_evals = torch.abs(eigenvalues)
+        abs_evals, _ = torch.sort(abs_evals, descending=True)
+        
+        # Filter small values
+        mask = abs_evals > eps
+
+        abs_evals = abs_evals[mask]
+        
+        # Estimate power law coefficient using log-log linear regression
+        k = torch.arange(1, len(abs_evals) + 1, dtype=torch.float32, device=abs_evals.device)
+        
+        # Log transform
+        log_k = torch.log(k)
+        log_evals = torch.log(abs_evals)
+
+        # Linear regression: log(λk) = log(λ1) - s * log(k)
+        # Solve for s using least squares
+        A = torch.stack([torch.ones_like(log_k), -log_k], dim=1)
+        # solution = torch.linalg.lstsq(A, log_evals.unsqueeze(1)).solution
+
+        ATA = A.T @ A  # [2, 2]
+        ATb = A.T @ log_evals.unsqueeze(1)  # [2, 1]
+
+        # Add small diagonal for numerical stability
+        ATA = ATA + torch.eye(2, device=ATA.device) * eps
+
+        # Solve using Cholesky or LU decomposition (differentiable)
+        solution = torch.linalg.solve(ATA, ATb)
+
+        log_lambda_1 = solution[0, 0]
+        s = solution[1, 0]  # This is our power law coefficient
+        
+        # Generate estimated eigenvalues
+        estimated_evals = torch.exp(log_lambda_1) * torch.pow(k, -s)
+        
+        # ELBO loss (Evidence Lower Bound)
+        # Assuming Gaussian likelihood and prior
+        # ELBO = E[log p(x|z)] - KL[q(z|x) || p(z)]
+        
+        # Likelihood term (negative MSE as log likelihood)
+        log_likelihood = -torch.nn.functional.mse_loss(estimated_evals, abs_evals, reduction='sum')
+
+        # KL divergence term (simplified, assuming Gaussian prior)
+        # Prior: N(0, 1) for parameters, Posterior: N(s, sigma^2)
+        sigma_s = torch.std(estimated_evals - abs_evals)
+        kl_divergence = 0.5 * torch.sum(1 + 2 * torch.log(sigma_s) - sigma_s**2)
+
+        # ELBO loss (negative ELBO for minimization)
+        loss = -(log_likelihood - kl_divergence) / len(abs_evals)
+        
+        return loss, (abs_evals, estimated_evals)
+
 
 
 LOSS_DICT = {
@@ -784,4 +877,5 @@ LOSS_DICT = {
     'MSEPowerLawLoss': MSEPowerLawLoss,
     'ElboPowerLawLoss': ElboPowerLawLoss,
     'HessianLossCombined': HessianLossCombined,
+    'ElboPowerLawLossTrunc': ElboPowerLawLossTrunc
 }

@@ -38,6 +38,7 @@ from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
 from llmcompressor.utils.loss import LOSS_DICT
+from llmcompressor.utils.next_strats import NEXT_STRATS_DICT
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -133,6 +134,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     kernel_mode: str = 'default'
     lam_lr: float = 3e-4
     lam_loss_name: str = 'HessianLossNormed'
+    next_strat_name: str = 'BasicStrat'
     opt_steps_num: int = 10
     k_next: int = 2
 
@@ -147,6 +149,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     _lam_optimizer: torch.optim.Optimizer = PrivateAttr()
     _lam_scheduler: Optional[LRScheduler] = PrivateAttr()
     _lam_loss = PrivateAttr()
+    _next_strat = PrivateAttr()
     _step_num: int = PrivateAttr()
     _step_num_no_optimize: int = PrivateAttr()
 
@@ -222,6 +225,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     T_max=self.opt_steps_num,
                 )
             self._lam_loss = LOSS_DICT[self.lam_loss_name]()
+            self._next_strat = NEXT_STRATS_DICT[self.next_strat_name]
             self._with_eigens = self._lam_loss.get_with_eigens()
             self._step_num = 0
         else:
@@ -451,19 +455,21 @@ class GPTQModifier(Modifier, QuantizationMixin):
         for module in keys_list:
             name = self._module_names[module]
 
-            postfixes = [name.split('.')[-1]]
-            if postfixes[0] == "out_proj":
-                postfixes += ['q_proj', 'k_proj', 'v_proj']
+            postfixes = []
+            postfix = name.split('.')[-1]
+            if self.lam_optimize and (postfix == "out_proj" or postfix.startswith("fc")):
+                postfixes = self._next_strat(postfix)
+
+            if len(postfixes) == 0:
+                mapped_lists['names'][postfix] = []
+                mapped_lists['modules'][postfix] = []
 
             for postfix in postfixes:
                 if postfix not in mapped_lists['names']:  # Check for postfix key, not name
-                    mapped_lists['names'][postfix] = [name]
-                    mapped_lists['modules'][postfix] = [module]
-                else:
-                    mapped_lists['names'][postfix].append(name)
-                    mapped_lists['modules'][postfix].append(module)
-            
-
+                    mapped_lists['names'][postfix] = []
+                    mapped_lists['modules'][postfix] = []
+                mapped_lists['names'][postfix].append(name)
+                mapped_lists['modules'][postfix].append(module)
 
         prev_loss = None
 
@@ -484,19 +490,16 @@ class GPTQModifier(Modifier, QuantizationMixin):
             name_list = mapped_lists['names'][postfix]
             module_list = mapped_lists['modules'][postfix]
 
-            # try:
-            #     start_idx = int(name.split('.')[-2]) + 1
-            # except ValueError:
-            #     start_idx = int(name.split('.')[-3]) + 1
-            start_idx = name_list.index(name) + 1
-            end_idx = start_idx + self.k_next
+            if len(name_list) > 0:
+                start_idx = name_list.index(name) + 1
+                end_idx = start_idx + self.k_next
 
-            for j in range(start_idx, end_idx):
-                if j < len(module_list):
-                    next_modules.append(module_list[j])
-                else:
-                    next_modules.append(None)
-            
+                for j in range(start_idx, end_idx):
+                    if j < len(module_list):
+                        next_modules.append(module_list[j])
+                    else:
+                        next_modules.append(None)
+
             # log out-of-optimization params
             hessian_trace = self._eigens[module]['hessian_trace']
             eigenvalues_max = self._eigens[module]['eigenvalues_max']
