@@ -21,3 +21,5 @@ deepspeed
 lm-eval
 transformers
 accelerate
+matplotlib
+pandas
