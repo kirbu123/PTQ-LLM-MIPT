@@ -774,7 +774,7 @@ class ElboPowerLawLossTrunc(BasicLoss):
     def __init__(self):
         super().__init__()
         self.with_eigens = True
-        self.trunc_values = 15
+        self.trunc_values = 40
 
     def forward(
         self,

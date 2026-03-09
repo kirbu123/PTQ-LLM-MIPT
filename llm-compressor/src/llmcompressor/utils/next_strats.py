@@ -11,6 +11,12 @@ def BasicStrat(postfix: str):
 def AllLinears(postfix: str):
   return list(set([postfix, 'out_proj', 'fc1', 'fc2']))
 
+def IgnoreNotOutProj(postfix: str):
+  if postfix == 'out_proj':
+    return [postfix]
+  else:
+    return []
+
 
 NEXT_STRATS_DICT = {
     'BasicStrat': BasicStrat,

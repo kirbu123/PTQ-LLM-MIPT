@@ -301,88 +301,64 @@ def compute_quantized_hessian_metrics(
     return H_q, eigenvalues_sorted, save_path
 
 
-# def plot_eigenvalue_list(csv_paths: list[str], trunc: int = 30):
-#     """
-#     Plot eigenvalues from multiple CSV files in one graph and save as PNG.
-    
-#     Args:
-#         csv_paths: List of paths to the eigenvalues CSV files
-#         trunc: Number of eigenvalues to truncate from the beginning
-#     """
-#     plt.figure(figsize=(12, 8))
-    
-#     colors = ['b', 'r', 'g', 'c', 'm', 'y', 'k', 'orange', 'purple', 'brown']
-    
-#     for i, csv_path in enumerate(csv_paths):
-#         # Load eigenvalues
-#         df = pd.read_csv(csv_path)
-#         eigenvalues = df['eigenvalue'].values
-#         eigenvalues = eigenvalues[trunc:]
-        
-#         # Get name from path
-#         name = os.path.basename(csv_path).replace('_eigenvalues.csv', '')
-
-#         # Plot
-#         color = colors[i % len(colors)]
-#         plt.plot(range(len(eigenvalues)), eigenvalues, 
-#                 color=color, linewidth=1, label=name, alpha=0.7)
-    
-#     plt.xlabel('Index')
-#     plt.ylabel('Eigenvalue')
-#     plt.title(f'Eigenvalues Comparison (truncated first {trunc} values)')
-#     plt.grid(True, alpha=0.3)
-#     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-#     plt.tight_layout()
-
-#     # Save in the same directory as first csv
-#     name = f'{name[:name.find("_eigenvalues.csv")]}_trunc={trunc}'
-#     save_path = os.path.join(os.path.dirname(csv_paths[0]), f'{name}_eigenvalues_comparison.png')
-#     plt.savefig(save_path, dpi=100, bbox_inches='tight')
-#     plt.close()
-    
-#     print(f"Saved comparison plot to {save_path}")
-
-def plot_eigenvalue_list(csv_paths: list[str], trunc: int = 30):
+def plot_eigenvalue_list(csv_paths: list[str], trunc_low: int = 10, trunc_high: int = 50):
     """
-    Plot eigenvalues from multiple CSV files in one graph and save as PNG.
-    Saves to <save_dir>/plots/ (one level up from the data/ dir of csv_paths[0]).
+    Plot eigenvalues from multiple CSV files as two side-by-side subplots:
+      Left:  eigenvalues[:trunc_low]  — the top (dominant) eigenvalues
+      Right: eigenvalues[trunc_high:] — the tail eigenvalues
 
     Args:
-        csv_paths: List of paths to the eigenvalues CSV files (under .../data/)
-        trunc: Number of leading eigenvalues to truncate from the plot
+        csv_paths:   List of paths to the eigenvalues CSV files (under .../data/)
+        trunc_low:   Number of top eigenvalues shown in the LEFT subplot
+        trunc_high:  Index from which the tail starts in the RIGHT subplot
     """
-    plt.figure(figsize=(12, 8))
-
+    fig, (ax_low, ax_high) = plt.subplots(1, 2, figsize=(18, 6))
     colors = ['b', 'r', 'g', 'c', 'm', 'y', 'k', 'orange', 'purple', 'brown']
 
     for i, csv_path in enumerate(csv_paths):
         df = pd.read_csv(csv_path)
-        eigenvalues = df['eigenvalue'].values[trunc:]
-
+        eigenvalues = df['eigenvalue'].values
         label = os.path.basename(csv_path).replace('_eigenvalues.csv', '').replace('.csv', '')
-
         color = colors[i % len(colors)]
-        plt.plot(range(len(eigenvalues)), eigenvalues,
-                 color=color, linewidth=1, label=label, alpha=0.7)
 
-    plt.xlabel('Index')
-    plt.ylabel('Eigenvalue')
-    plt.title(f'Eigenvalues Comparison (truncated first {trunc} values)')
-    plt.grid(True, alpha=0.3)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        # Left subplot: dominant eigenvalues [:trunc_low]
+        top = eigenvalues[:trunc_low]
+        ax_low.plot(range(len(top)), top,
+                    color=color, linewidth=1.5, label=label, alpha=0.8)
+
+        # Right subplot: tail eigenvalues [trunc_high:]
+        tail = eigenvalues[trunc_high:]
+        ax_high.plot(range(len(tail)), tail,
+                     color=color, linewidth=1, label=label, alpha=0.7)
+
+    ax_low.set_xlabel('Index')
+    ax_low.set_ylabel('Eigenvalue')
+    ax_low.set_title(f'Top eigenvalues  [: {trunc_low}]')
+    ax_low.grid(True, alpha=0.3)
+    ax_low.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    ax_high.set_xlabel('Index')
+    ax_high.set_ylabel('Eigenvalue')
+    ax_high.set_title(f'Tail eigenvalues  [{trunc_high} :]')
+    ax_high.grid(True, alpha=0.3)
+    ax_high.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    fig.suptitle('Eigenvalues Comparison', fontsize=13)
     plt.tight_layout()
 
     # CSVs live in .../data/, PNGs go in .../plots/
     base_label = os.path.basename(csv_paths[0]).replace('_eigenvalues.csv', '').replace('.csv', '')
     plots_dir = os.path.join(os.path.dirname(os.path.dirname(csv_paths[0])), 'plots')
     os.makedirs(plots_dir, exist_ok=True)
-    save_path = os.path.join(plots_dir, f'{base_label}_trunc={trunc}_eigenvalues_comparison.png')
+    save_path = os.path.join(
+        plots_dir,
+        f'{base_label}_low={trunc_low}_high={trunc_high}_eigenvalues_comparison.png'
+    )
 
     plt.savefig(save_path, dpi=100, bbox_inches='tight')
     plt.close()
 
     print(f"Saved comparison plot to {save_path}")
-
 
 if __name__ == "__main__":
     module = nn.Linear(768, 768)

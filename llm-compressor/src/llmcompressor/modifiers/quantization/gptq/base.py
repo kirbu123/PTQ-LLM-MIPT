@@ -548,7 +548,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     save_dir=self._hessian_log_dir
                 )
 
-                plot_eigenvalue_list([save_path_fp, save_path_quantize], trunc=30)
+                plot_eigenvalue_list([save_path_fp, save_path_quantize], trunc_low = 40, trunc_high = 50)
 
                 comp_logger.set_loss(loss.item())
 
