@@ -20,5 +20,6 @@ def IgnoreNotOutProj(postfix: str):
 
 NEXT_STRATS_DICT = {
     'BasicStrat': BasicStrat,
-    'AllLinears': AllLinears
+    'AllLinears': AllLinears,
+    'IgnoreNotOutProj': IgnoreNotOutProj
 }
