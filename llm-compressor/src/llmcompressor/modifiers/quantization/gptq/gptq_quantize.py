@@ -473,6 +473,7 @@ def quantize_weight(
         scale.to(dtype=final_dtype),
         zero_point.to(dtype=quant_args.pytorch_dtype()),
         g_idx,
+        H
     )
 
 
