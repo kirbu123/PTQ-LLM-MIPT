@@ -282,8 +282,6 @@ def quantize_weight(
         except RuntimeError:
             pass
 
-    # H = torch.zeros_like(H, dtype=H.dtype) # used for debug H usage
-
     # del hessians_dict[module]  # so we have to delete the original reference manually
 
     # create observer for calculating quantization parameters

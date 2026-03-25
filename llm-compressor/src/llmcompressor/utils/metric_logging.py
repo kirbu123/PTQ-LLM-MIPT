@@ -16,6 +16,7 @@ from torch.nn import Module
 import torch
 import torch.nn as nn
 
+import numpy as np
 import transformers
 import matplotlib.pyplot as plt
 import os
@@ -297,6 +298,9 @@ def compute_quantized_hessian_metrics(
             "eigenvalue": eigenvalues_np,
         })
         df.to_csv(save_path, index=False)
+
+        wq_save_path = os.path.join(save_dir, f"{name}_Wq.npy")
+        np.save(wq_save_path, W_q.cpu().float().numpy())
 
     return H_q, eigenvalues_sorted, save_path
 
