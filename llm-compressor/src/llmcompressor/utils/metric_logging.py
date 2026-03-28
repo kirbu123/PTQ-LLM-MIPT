@@ -263,7 +263,8 @@ def compute_quantized_hessian_metrics(
     device = H_cal.device
     dtype = torch.float32
 
-    W_q = fake_quantize(quantized_weight, scale, zero_point, quant_args)
+    # W_q = fake_quantize(quantized_weight, scale, zero_point, quant_args)
+    W_q = quantized_weight.clone()
     W_q = W_q.to(device=device, dtype=dtype)
 
     H = H_cal.to(device=device, dtype=dtype).clone()

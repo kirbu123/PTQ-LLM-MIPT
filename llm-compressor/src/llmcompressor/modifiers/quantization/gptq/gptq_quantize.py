@@ -281,6 +281,11 @@ def quantize_weight(
                     H += lam_tensor[i] * apply_conv(H_next, mode=kernel_mode)
         except RuntimeError:
             pass
+    
+    # debug_mode
+    # A = torch.randn(H.shape[0], H.shape[1], device=H.device, dtype=GPTQ_PRECISION)
+    # H = ((A + A.T) / 2) * 0.01
+    # H = torch.eye(H.shape[0], device=H.device, dtype=GPTQ_PRECISION) * 0.1
 
     # del hessians_dict[module]  # so we have to delete the original reference manually
 
@@ -364,6 +369,8 @@ def quantize_weight(
         )
         Hinv = H = torch.eye(num_columns, dtype=H.dtype, device=H.device)
 
+    W_adj = torch.zeros_like(W)
+
     # See section 3.4 of https://arxiv.org/abs/2203.07259
     for i1 in range(0, num_columns, blocksize):
         i2 = min(i1 + blocksize, num_columns)
@@ -371,6 +378,8 @@ def quantize_weight(
 
         W1 = W[:, i1:i2].clone()
         Q1 = torch.zeros_like(W1)
+        W1_adj = torch.zeros_like(W1)
+
         Err1 = torch.zeros_like(W1)
         losses1 = torch.zeros_like(W1)
         Hinv1 = Hinv[i1:i2, i1:i2]
@@ -420,6 +429,7 @@ def quantize_weight(
 
             # propagate column error
             Q1[:, i] = q
+            W1_adj[:, i] = w
             losses1[:, i] = (w - q) ** 2 / d**2
 
             err1 = (w - q) / d
@@ -432,6 +442,7 @@ def quantize_weight(
 
         # propagate block error
         W[:, i1:i2] = Q1
+        W_adj[:, i1:i2] = W1_adj
         losses += torch.sum(losses1, 1) / 2
 
         w_err = Err1.matmul(Hinv[i1:i2, i2:])
@@ -468,6 +479,7 @@ def quantize_weight(
     return (
         loss,
         W,
+        W_adj,
         scale.to(dtype=final_dtype),
         zero_point.to(dtype=quant_args.pytorch_dtype()),
         g_idx,

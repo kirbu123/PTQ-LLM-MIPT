@@ -45,3 +45,7 @@ python lauchers/do_compression.py \
                     --smoothquant \
                     --gptq
 ```
+
+### Dev info
+
+subgraph chunk size situated in: /home/buka2004/PTQ-LLM-MIPT/llm-compressor/src/llmcompressor/pipelines/sequential/helpers.py

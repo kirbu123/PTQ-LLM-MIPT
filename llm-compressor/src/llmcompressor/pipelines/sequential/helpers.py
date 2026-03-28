@@ -148,7 +148,7 @@ def trace_subgraphs(
 
     # perform subgraph partition
     # partitions = topological_partition(graph, targets)
-    group_size = 6
+    group_size = 4
     # group_size = len(targets) // 3
     partitions = topological_partition_with_grouping(graph, targets, group_size=group_size)
     subgraphs = partition_graph(model, partitions)
