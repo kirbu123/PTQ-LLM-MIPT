@@ -29,6 +29,11 @@ from llmcompressor.modifiers.quantization.gptq.gptq_quantize import (
     accumulate_hessian,
     make_empty_hessian,
 )
+from compressed_tensors.quantization import (
+    QuantizationConfig,
+    QuantizationScheme,
+    QuantizationStrategy,
+)
 
 
 hessian_logging_dir = '/home/buka2004/PTQ-LLM-MIPT/algo_outputs/basic'
@@ -365,9 +370,138 @@ def plot_eigenvalue_list(csv_paths: list[str], trunc_low: int = 10, trunc_high: 
 
     print(f"Saved comparison plot to {save_path}")
 
-if __name__ == "__main__":
-    module = nn.Linear(768, 768)
-    device = "cuda:0"
-    module = module.to(device)
-    
-    compute_hessian_metrics(module, "test_dataset")
+def _pushed_l2_hessian_symmetric(
+    W: torch.Tensor,
+    module: nn.Module,
+    H_cal: torch.Tensor,
+) -> torch.Tensor:
+    """H_p = W H W^T (Linear) or W^T H W (Conv1D), symmetrized; same layout as compute_quantized_hessian_metrics."""
+    device = H_cal.device
+    dtype = torch.float32
+    H = H_cal.to(device=device, dtype=dtype).clone()
+    H = (H + H.T) / 2
+    W = W.to(device=device, dtype=dtype)
+    if isinstance(module, nn.Linear):
+        H_p = W @ H @ W.T
+    elif isinstance(module, transformers.Conv1D):
+        H_p = W.T @ H @ W
+    else:
+        raise ValueError(f"Unsupported module type: {type(module)}")
+    return (H_p + H_p.T) / 2
+
+
+def _gptq_fake_quantize_weight_columns(
+    W_module_layout: torch.Tensor,
+    module: nn.Module,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    quant_args,
+    g_idx: torch.Tensor | None,
+) -> torch.Tensor:
+    """
+    Apply the same per-column fake_quantize rules as gptq_quantize.quantize_weight.
+    W_module_layout matches module.weight shape (Linear: out×in; Conv1D: nf×nx).
+    """
+    strategy = quant_args.strategy
+    W_work = W_module_layout.to(dtype=torch.float32).clone()
+    if isinstance(module, transformers.Conv1D):
+        W_work = W_work.transpose(0, 1).contiguous()
+    num_rows, num_columns = W_work.shape
+    Q = torch.zeros_like(W_work)
+    for i in range(num_columns):
+        w = W_work[:, i].clone()
+        if strategy == QuantizationStrategy.TENSOR:
+            q = fake_quantize(w, scale, zero_point, quant_args)
+        elif strategy == QuantizationStrategy.CHANNEL:
+            q = fake_quantize(w, scale[:, 0], zero_point[:, 0], quant_args)
+        elif strategy == QuantizationStrategy.GROUP:
+            if g_idx is None:
+                raise ValueError(
+                    "g_idx is required to rebuild GROUP fake-quant weights from scale/zero_point"
+                )
+            group_index = int(g_idx[i].item())
+            altered_qargs = copy(quant_args)
+            altered_qargs.strategy = QuantizationStrategy.CHANNEL
+            q = fake_quantize(
+                w,
+                scale[:, group_index],
+                zero_point[:, group_index],
+                altered_qargs,
+            )
+        else:
+            raise ValueError(f"Unsupported GPTQ quantization strategy: {strategy}")
+        Q[:, i] = q
+    if isinstance(module, transformers.Conv1D):
+        Q = Q.transpose(0, 1).contiguous()
+    return Q
+
+
+def pushed_l2_hessian_eigentrace_after_gptq(
+    module: nn.Module,
+    H_cal: torch.Tensor,
+    W_adj: torch.Tensor,
+    quantized_weight: torch.Tensor,
+    scale: torch.Tensor,
+    zero_point: torch.Tensor | None,
+    quant_args,
+    g_idx: torch.Tensor | None = None,
+    name: str = None,
+    save_dir: str = hessian_logging_dir
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    After quantize_weight: eigenvalue trace of pushed calibration Hessian W H_cal W^T
+    for W_adj (float column references) and for quantized weights.
+
+    For PSD matrices, sum of eigenvalues equals the matrix trace, so we use torch.trace.
+
+    Quantized branch: rebuilds W_q via scale/zero_point (and g_idx for GROUP) when possible;
+    if GROUP and g_idx is None, uses quantized_weight as W_q (already QDQ from GPTQ).
+    """
+    H_adj = _pushed_l2_hessian_symmetric(W_adj, module, H_cal)
+
+    strat = quant_args.strategy
+    if strat == QuantizationStrategy.GROUP and g_idx is None:
+        W_q = quantized_weight.to(dtype=torch.float32)
+    else:
+        W_q = _gptq_fake_quantize_weight_columns(
+            quantized_weight, module, scale, zero_point, quant_args, g_idx
+        )
+
+    H_q = _pushed_l2_hessian_symmetric(W_q, module, H_cal)
+
+    H_q = (H_q + H_q.T) / 2
+
+    eigenvalues = torch.linalg.eigvalsh(H_q)
+    eigenvalues_sorted, _ = torch.sort(torch.abs(eigenvalues), descending=True)
+    eigenvalues_q_np = eigenvalues_sorted.cpu().numpy()
+
+    eigenvalues = torch.linalg.eigvalsh(H_adj)
+    eigenvalues_sorted, _ = torch.sort(torch.abs(eigenvalues), descending=True)
+    eigenvalues_adj_np = eigenvalues_sorted.cpu().numpy()
+
+    save_path_q = None
+    save_path_adj = None
+
+    if name is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        save_dir = os.path.join(save_dir, 'data')
+        os.makedirs(save_dir, exist_ok=True)
+
+        save_path_q = os.path.join(save_dir, f"{name}_q.csv")
+        df = pd.DataFrame({
+            "index": range(len(eigenvalues_q_np)),
+            "eigenvalue": eigenvalues_q_np,
+        })
+        df.to_csv(save_path_q, index=False)
+
+        save_path_adj = os.path.join(save_dir, f"{name}_adj.csv")
+        df = pd.DataFrame({
+            "index": range(len(eigenvalues_adj_np)),
+            "eigenvalue": eigenvalues_adj_np,
+        })
+        df.to_csv(save_path_adj, index=False)
+
+        wq_save_path = os.path.join(save_dir, f"{name}_Wq.npy")
+        np.save(wq_save_path, W_q.cpu().float().numpy())
+
+    return save_path_q, save_path_adj

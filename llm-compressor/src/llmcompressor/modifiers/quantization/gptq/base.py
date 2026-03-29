@@ -39,7 +39,12 @@ from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
 from llmcompressor.utils.loss import LOSS_DICT
 from llmcompressor.utils.next_strats import NEXT_STRATS_DICT
-from llmcompressor.utils.metric_logging import compute_hessian_metrics, plot_eigenvalue_list, compute_quantized_hessian_metrics
+from llmcompressor.utils.metric_logging import (
+    compute_hessian_metrics,
+    plot_eigenvalue_list,
+    compute_quantized_hessian_metrics,
+    pushed_l2_hessian_eigentrace_after_gptq
+)
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -541,17 +546,30 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     kernel_mode=self.kernel_mode
                 )
 
-                _, _, save_path_quantize = compute_quantized_hessian_metrics(
-                    quantized_weight, scale, zero_point, quant_args, module, H_cal, f"{name}_quantized",
-                    save_dir=self._hessian_log_dir
+                save_path_q, save_path_adj = pushed_l2_hessian_eigentrace_after_gptq(
+                    module=module,
+                    H_cal=H_cal,
+                    W_adj=W_adj,
+                    quantized_weight=quantized_weight,
+                    scale=scale,
+                    zero_point=zero_point,
+                    quant_args=quant_args,
+                    g_idx=g_idx,
+                    name=name,
+                    save_dir=self._hessian_log_dir,
                 )
 
-                _, _, save_path_optimize = compute_quantized_hessian_metrics(
-                    W_adj, scale, zero_point, quant_args, module, H_cal, f"{name}_optimized",
-                    save_dir=self._hessian_log_dir
-                )
+                # _, _, save_path_quantize = compute_quantized_hessian_metrics(
+                #    quantized_weight, scale, zero_point, quant_args, module, H_cal, f"{name}_quantized",
+                #    save_dir=self._hessian_log_dir
+                # )
 
-                plot_eigenvalue_list([save_path_fp, save_path_quantize, save_path_optimize], trunc_low = 40, trunc_high = 50)
+                # _, _, save_path_optimize = compute_quantized_hessian_metrics(
+                #     W_adj, scale, zero_point, quant_args, module, H_cal, f"{name}_optimized",
+                #     save_dir=self._hessian_log_dir
+                # )
+
+                plot_eigenvalue_list([save_path_fp, save_path_q, save_path_adj], trunc_low = 40, trunc_high = 50)
 
                 comp_logger.set_loss(loss.item())
 
