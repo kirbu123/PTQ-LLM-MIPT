@@ -48,4 +48,7 @@ python lauchers/do_compression.py \
 
 ### Dev info
 
-subgraph chunk size situated in: /home/buka2004/PTQ-LLM-MIPT/llm-compressor/src/llmcompressor/pipelines/sequential/helpers.py
+subgraph chunk size situated in:
+```
+./llm-compressor/src/llmcompressor/pipelines/sequential/helpers.py
+```

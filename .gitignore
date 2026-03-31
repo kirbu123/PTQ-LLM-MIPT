@@ -144,7 +144,7 @@ applications/DeepSpeed-Chat/data
 dataset/
 datsets/
 *.zst
-scripts/
+grid_search_logs/
 int8_models/
 logs/
 *.pt

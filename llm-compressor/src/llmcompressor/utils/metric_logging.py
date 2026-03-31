@@ -35,9 +35,6 @@ from compressed_tensors.quantization import (
     QuantizationStrategy,
 )
 
-
-hessian_logging_dir = '/home/buka2004/PTQ-LLM-MIPT/algo_outputs/basic'
-
 __all__ = ["get_GPU_memory_usage", "get_layer_size_mb", "CompressionLogger"]
 
 
@@ -213,7 +210,7 @@ def plot_eigenvalues(csv_path: str, trunc: int = 35):
 def compute_hessian_metrics(
     module: nn.Module,
     name: str = None,
-    save_dir: str = hessian_logging_dir,
+    save_dir: str = None,
     H_cal: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, str | None]:
     """
@@ -257,7 +254,7 @@ def compute_quantized_hessian_metrics(
     module: nn.Module,
     H_cal: torch.Tensor,
     name: str = None,
-    save_dir: str = hessian_logging_dir,
+    save_dir: str = None,
 ) -> tuple[torch.Tensor, torch.Tensor, str | None]:
     """
     Pushed-forward L2 Hessian H_q = W_q H_cal W_q^T.
@@ -446,7 +443,7 @@ def pushed_l2_hessian_eigentrace_after_gptq(
     quant_args,
     g_idx: torch.Tensor | None = None,
     name: str = None,
-    save_dir: str = hessian_logging_dir
+    save_dir: str = None
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     After quantize_weight: eigenvalue trace of pushed calibration Hessian W H_cal W^T

@@ -25,3 +25,6 @@ markers = [
     "multi_gpu: tests that require multiple GPUs",
 ]
 tmp_path_retention_policy = "failed"
+
+[tool.setuptools_scm]
+fallback_version = "0.1.0"

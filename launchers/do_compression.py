@@ -1,7 +1,7 @@
 import argparse
 import os
 import sys
-sys.path.append('/home/buka2004/PTQ-LLM-MIPT/llm-compressor/src')
+sys.path.append('./llm-compressor/src')
 from llmcompressor.modifiers.quantization import GPTQModifier
 from llmcompressor.modifiers.smoothquant import SmoothQuantModifier, SmoothQuantRegModifier
 from datasets import load_dataset
@@ -397,7 +397,7 @@ if __name__ == "__main__":
         model_name=model_name,
         teacher_model=teacher_model,
         student_model=oneshot_model,
-        tasks="wikitext",
+        tasks="wikitext,hellaswag,piqa,arc_easy,lambada_openai",
         num_fewshot=0,
         limit=500,
         device=args.device
