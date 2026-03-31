@@ -211,7 +211,7 @@ def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
-        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, lam_lr=3e-4, k_next=1, opt_steps_num=10,
+        hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, do_hessian_plot=False, lam_lr=3e-4, k_next=1, opt_steps_num=10,
         lam_loss_name='HessianLossNormed', next_strat_name='BasicStrat',
         seed=42
     ):
@@ -236,6 +236,7 @@ def quantize_model_by_oneshot(
             kernel_mode=kernel_mode,
             log_dir=output_dir,
             lam_optimize=lam_optimize,
+            do_hessian_plot=do_hessian_plot,
             lam_lr=lam_lr,
             k_next=k_next,
             opt_steps_num=opt_steps_num,
@@ -301,6 +302,10 @@ def parse_args():
     # Param optimize
     parser.add_argument('--lam_optimize', action='store_true',
                    help='Enable lam param optimize')
+    
+    # Hessian plot
+    parser.add_argument('--do_hessian_plot', action='store_true',
+                   help='Enable hessian plot')
 
     # GPTQ parameters
     parser.add_argument('--gptq', action='store_true',
@@ -377,6 +382,7 @@ if __name__ == "__main__":
         hes_reg_lam=args.hes_reg_lam,
         smoothing_strength=args.smoothing_strength,
         lam_optimize=args.lam_optimize,
+        do_hessian_plot=args.do_hessian_plot,
         lam_lr=args.lam_lr,
         k_next=args.k_next,
         opt_steps_num=args.opt_steps_num,

@@ -504,4 +504,7 @@ def pushed_l2_hessian_eigentrace_after_gptq(
         wq_save_path = os.path.join(save_dir, f"{name}_Wq.npy")
         np.save(wq_save_path, W_q.cpu().float().numpy())
 
+        w_adj_save_path = os.path.join(save_dir, f"{name}_W_adj.npy")
+        np.save(w_adj_save_path, W_adj.cpu().float().numpy())
+
     return save_path_q, save_path_adj

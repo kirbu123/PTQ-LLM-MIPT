@@ -1,5 +1,0 @@
-# Idea of expansion layer logging
-
-1) rewrite quant_weight (gptq core function) to return expanded (unquant changed layer weight)
-2) log them and their hessian eigentrace
-3) generate hipotesys about hessian eigentraces change with regularisation

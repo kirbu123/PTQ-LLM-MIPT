@@ -143,6 +143,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     next_strat_name: str = 'BasicStrat'
     opt_steps_num: int = 10
     k_next: int = 2
+    do_hessian_plot: bool = False
 
     # Lam optimize params
     lam_optimize: bool = False
@@ -529,11 +530,11 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 module
             ) as comp_logger:
 
-                H_cal = self._hessians[module].clone()
-
-                _, _, save_path_fp = compute_hessian_metrics(
-                    module, f"{name}_fp", H_cal=H_cal, save_dir=self._hessian_log_dir
-                )
+                if self.do_hessian_plot:
+                    H_cal = self._hessians[module].clone()
+                    _, _, save_path_fp = compute_hessian_metrics(
+                        module, f"{name}_fp", H_cal=H_cal, save_dir=self._hessian_log_dir
+                    )
 
                 loss, quantized_weight, W_adj, scale, zero_point, g_idx, updated_hessian = quantize_weight(
                     module=module,
@@ -546,30 +547,22 @@ class GPTQModifier(Modifier, QuantizationMixin):
                     kernel_mode=self.kernel_mode
                 )
 
-                save_path_q, save_path_adj = pushed_l2_hessian_eigentrace_after_gptq(
-                    module=module,
-                    H_cal=H_cal,
-                    W_adj=W_adj,
-                    quantized_weight=quantized_weight,
-                    scale=scale,
-                    zero_point=zero_point,
-                    quant_args=quant_args,
-                    g_idx=g_idx,
-                    name=name,
-                    save_dir=self._hessian_log_dir,
-                )
+                if self.do_hessian_plot:
+                    logger.info(f"Plotting hessian for {name}")
+                    save_path_q, save_path_adj = pushed_l2_hessian_eigentrace_after_gptq(
+                        module=module,
+                        H_cal=H_cal,
+                        W_adj=W_adj,
+                        quantized_weight=quantized_weight,
+                        scale=scale,
+                        zero_point=zero_point,
+                        quant_args=quant_args,
+                        g_idx=g_idx,
+                        name=name,
+                        save_dir=self._hessian_log_dir,
+                    )
 
-                # _, _, save_path_quantize = compute_quantized_hessian_metrics(
-                #    quantized_weight, scale, zero_point, quant_args, module, H_cal, f"{name}_quantized",
-                #    save_dir=self._hessian_log_dir
-                # )
-
-                # _, _, save_path_optimize = compute_quantized_hessian_metrics(
-                #     W_adj, scale, zero_point, quant_args, module, H_cal, f"{name}_optimized",
-                #     save_dir=self._hessian_log_dir
-                # )
-
-                plot_eigenvalue_list([save_path_fp, save_path_q, save_path_adj], trunc_low = 40, trunc_high = 50)
+                    plot_eigenvalue_list([save_path_fp, save_path_q, save_path_adj], trunc_low = 40, trunc_high = 50)
 
                 comp_logger.set_loss(loss.item())
 
