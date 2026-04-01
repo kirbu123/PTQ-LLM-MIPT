@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:6"
+DEVICE="cuda:5"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -26,15 +26,15 @@ HES_REG_LAM=0.0
 NEXT_REG_LAM=0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
-LAM_LOSS_NAME="ElboPowerLawLoss" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
+LAM_LOSS_NAME="HessianLossTraceScaled" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
 NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 
 # Extended grid search parameters
-GRID_VALUES=(5 10)
+GRID_VALUES=(10 15)
 
 # Paths
 COMPRESSION_SCRIPT="../do_compression.py"
-OUTPUT_BASE_DIR="../../quant_checkpoints/final/AllLinears"
+OUTPUT_BASE_DIR="../../quant_checkpoints/final/AllLinears/OneStep"
 LOG_DIR="./grid_search_logs"
 
 # Error handling
