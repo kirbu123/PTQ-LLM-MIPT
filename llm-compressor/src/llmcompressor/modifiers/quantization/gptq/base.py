@@ -145,6 +145,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     opt_steps_num: int = 10
     k_next: int = 2
     do_hessian_plot: bool = False
+    lam_optimize_method: str = 'multistep'
     lam_ls_ridge: float = 1e-4
     lam_pl_target_scale: float = 1.0
 
@@ -243,6 +244,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
             self._step_num = 0
         else:
             self._lam_tensor = None
+            self._with_eigens = False
+
+        if self.lam_optimize_method == 'onestep':
             self._with_eigens = False
 
         return True
@@ -364,94 +368,93 @@ class GPTQModifier(Modifier, QuantizationMixin):
             # self._eigenvals[module], self._eigenvects[module] = eigens['eigenvalues'], eigens['eigenvectors']
             self._eigens[module] = eigens
 
+    def _update_lam_param_multistep(self, lam_loss, module, next_modules):
+        if next_modules is not None:
 
-    # def _update_lam_param(self, lam_loss, module, next_modules):
-    #     if next_modules is not None:
+            device = self._hessians[module].device
+            module_name = self._module_names[module]
 
-    #         device = self._hessians[module].device
-    #         module_name = self._module_names[module]
+            if self._lam_tensor.device != device:
+                self._lam_tensor = self._lam_tensor.to(device)
 
-    #         if self._lam_tensor.device != device:
-    #             self._lam_tensor = self._lam_tensor.to(device)
+            self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+            self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self._lam_optimizer, 
+                T_max=self.opt_steps_num,
+            )
 
-    #         self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
-    #         self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #             self._lam_optimizer, 
-    #             T_max=self.opt_steps_num,
-    #         )
+            if not self._lam_tensor.requires_grad:
+                self._lam_tensor.requires_grad_(True)
 
-    #         if not self._lam_tensor.requires_grad:
-    #             self._lam_tensor.requires_grad_(True)
+            init_sorted_eigens = None
+            last_sorted_eigens = None
 
-    #         init_sorted_eigens = None
-    #         last_sorted_eigens = None
+            with torch.enable_grad():
+                for i in range(self.opt_steps_num):
+                    self._lam_optimizer.zero_grad()
 
-    #         with torch.enable_grad():
-    #             for i in range(self.opt_steps_num):
-    #                 self._lam_optimizer.zero_grad()
+                    loss_reg, sorted_eigens = lam_loss(
+                        lam=self._lam_tensor,
+                        module=module,
+                        next_modules=next_modules,
+                        hessians=self._hessians,
+                        eigens=self._eigens,
+                        kernel_mode=self.kernel_mode
+                    )
 
-    #                 loss_reg, sorted_eigens = lam_loss(
-    #                     lam=self._lam_tensor,
-    #                     module=module,
-    #                     next_modules=next_modules,
-    #                     hessians=self._hessians,
-    #                     eigens=self._eigens,
-    #                     kernel_mode=self.kernel_mode
-    #                 )
+                    if i == 0: init_sorted_eigens = sorted_eigens
+                    if sorted_eigens is not None: last_sorted_eigens = sorted_eigens
 
-    #                 if i == 0: init_sorted_eigens = sorted_eigens
-    #                 if sorted_eigens is not None: last_sorted_eigens = sorted_eigens
+                    loss_reg.backward(retain_graph=True)
 
-    #                 loss_reg.backward(retain_graph=True)
+                    self._lam_optimizer.step()
+                    self._lam_scheduler.step()
 
-    #                 self._lam_optimizer.step()
-    #                 self._lam_scheduler.step()
+                    current_lr = self._lam_optimizer.param_groups[0]['lr']
+                    self._log_writer.add_scalar('lam-lr', current_lr, self._step_num*self.opt_steps_num + i)
+                    self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num*self.opt_steps_num + i)
 
-    #                 current_lr = self._lam_optimizer.param_groups[0]['lr']
-    #                 self._log_writer.add_scalar('lam-lr', current_lr, self._step_num*self.opt_steps_num + i)
-    #                 self._log_writer.add_scalar('loss-param', loss_reg.item(), self._step_num*self.opt_steps_num + i)
+            self._log_writer.add_scalar('mean-lam-param', torch.mean(self._lam_tensor).item(), self._step_num)
+            for i in range(len(self._lam_tensor)):
+                self._log_writer.add_scalar(f'lam-param-dim-{i}', self._lam_tensor[i].item(), self._step_num)
 
-    #         self._log_writer.add_scalar('mean-lam-param', torch.mean(self._lam_tensor).item(), self._step_num)
-    #         for i in range(len(self._lam_tensor)):
-    #             self._log_writer.add_scalar(f'lam-param-dim-{i}', self._lam_tensor[i].item(), self._step_num)
+            if init_sorted_eigens is not None and last_sorted_eigens is not None:
 
-    #         if init_sorted_eigens is not None and last_sorted_eigens is not None:
+                estimated_eigens = None
+                init_estimated_eigens, last_estimated_eigens = None, None
+                if isinstance(init_sorted_eigens, tuple):
+                    init_sorted_eigens, init_estimated_eigens = init_sorted_eigens
+                if isinstance(last_sorted_eigens, tuple):
+                    last_sorted_eigens, last_estimated_eigens = last_sorted_eigens
 
-    #             estimated_eigens = None
-    #             init_estimated_eigens, last_estimated_eigens = None, None
-    #             if isinstance(init_sorted_eigens, tuple):
-    #                 init_sorted_eigens, init_estimated_eigens = init_sorted_eigens
-    #             if isinstance(last_sorted_eigens, tuple):
-    #                 last_sorted_eigens, last_estimated_eigens = last_sorted_eigens
+                max_plot_values = min(min(10000, len(init_sorted_eigens)), len(last_sorted_eigens))
+                for idx in range(max_plot_values):
+                    self._log_writer.add_scalar(
+                        f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init',
+                        init_sorted_eigens[idx].item(),
+                        idx
+                    )
+                    self._log_writer.add_scalar(
+                        f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last',
+                        last_sorted_eigens[idx].item(),
+                        idx
+                    )
+                    if init_estimated_eigens is not None:
+                        self._log_writer.add_scalar(
+                            f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init-estimated',
+                            init_estimated_eigens[idx].item(),
+                            idx
+                        )
+                    if last_estimated_eigens is not None:
+                        self._log_writer.add_scalar(
+                            f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last-estimated',
+                            last_estimated_eigens[idx].item(),
+                            idx
+                        )
 
-    #             max_plot_values = min(min(10000, len(init_sorted_eigens)), len(last_sorted_eigens))
-    #             for idx in range(max_plot_values):
-    #                 self._log_writer.add_scalar(
-    #                     f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init',
-    #                     init_sorted_eigens[idx].item(),
-    #                     idx
-    #                 )
-    #                 self._log_writer.add_scalar(
-    #                     f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last',
-    #                     last_sorted_eigens[idx].item(),
-    #                     idx
-    #                 )
-    #                 if init_estimated_eigens is not None:
-    #                     self._log_writer.add_scalar(
-    #                         f'eigenvalue-spectr/module={module_name}:step={self._step_num}/init-estimated',
-    #                         init_estimated_eigens[idx].item(),
-    #                         idx
-    #                     )
-    #                 if last_estimated_eigens is not None:
-    #                     self._log_writer.add_scalar(
-    #                         f'eigenvalue-spectr/module={module_name}:step={self._step_num}/last-estimated',
-    #                         last_estimated_eigens[idx].item(),
-    #                         idx
-    #                     )
+            self._step_num += 1
 
-    #         self._step_num += 1
-
-    #     return 0
+        return 0
 
     @staticmethod
     def _lam_trace_ridge_alpha(
@@ -470,7 +473,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         rhs = b * c + mu * alpha0
         return torch.linalg.solve(G, rhs.unsqueeze(1)).squeeze(1)
 
-    def _update_lam_param(self, lam_loss, module, next_modules):
+    def _update_lam_param_onestep(self, module, next_modules):
         """
         Ridge closed-form update using only Hessian traces (no eigenvalues).
 
@@ -529,80 +532,6 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 "lam-trace-mean-target", mu1_ref, self._step_num
             )
 
-        # init_sorted_eigens = None
-        # last_sorted_eigens = None
-        # loss_init = None
-        # loss_last = None
-        # with torch.no_grad():
-        #     loss_init, init_sorted_eigens = lam_loss(
-        #         lam=lam_old,
-        #         module=module,
-        #         next_modules=next_modules,
-        #         hessians=self._hessians,
-        #         eigens=self._eigens,
-        #         kernel_mode=self.kernel_mode,
-        #     )
-        #     loss_last, last_sorted_eigens = lam_loss(
-        #         lam=self._lam_tensor,
-        #         module=module,
-        #         next_modules=next_modules,
-        #         hessians=self._hessians,
-        #         eigens=self._eigens,
-        #         kernel_mode=self.kernel_mode,
-        #     )
-
-        # if loss_init is not None:
-        #     self._log_writer.add_scalar(
-        #         "loss-param-init", loss_init.item(), self._step_num
-        #     )
-        # if loss_last is not None:
-        #     self._log_writer.add_scalar("loss-param", loss_last.item(), self._step_num)
-
-        # self._log_writer.add_scalar(
-        #     "mean-lam-param", torch.mean(self._lam_tensor).item(), self._step_num
-        # )
-        # for i in range(len(self._lam_tensor)):
-        #     self._log_writer.add_scalar(
-        #         f"lam-param-dim-{i}", self._lam_tensor[i].item(), self._step_num
-        #     )
-
-        # if init_sorted_eigens is not None and last_sorted_eigens is not None:
-        #     init_estimated_eigens = None
-        #     last_estimated_eigens = None
-        #     if isinstance(init_sorted_eigens, tuple):
-        #         init_sorted_eigens, init_estimated_eigens = init_sorted_eigens
-        #     if isinstance(last_sorted_eigens, tuple):
-        #         last_sorted_eigens, last_estimated_eigens = last_sorted_eigens
-
-        #     max_plot_values = min(
-        #         min(10000, len(init_sorted_eigens)), len(last_sorted_eigens)
-        #     )
-        #     for idx in range(max_plot_values):
-        #         self._log_writer.add_scalar(
-        #             f"eigenvalue-spectr/module={module_name}:step={self._step_num}/init",
-        #             init_sorted_eigens[idx].item(),
-        #             idx,
-        #         )
-        #         self._log_writer.add_scalar(
-        #             f"eigenvalue-spectr/module={module_name}:step={self._step_num}/last",
-        #             last_sorted_eigens[idx].item(),
-        #             idx,
-        #         )
-        #         if init_estimated_eigens is not None:
-        #             self._log_writer.add_scalar(
-        #                 f"eigenvalue-spectr/module={module_name}:step={self._step_num}/init-estimated",
-        #                 init_estimated_eigens[idx].item(),
-        #                 idx,
-        #             )
-        #         if last_estimated_eigens is not None:
-        #             self._log_writer.add_scalar(
-        #                 f"eigenvalue-spectr/module={module_name}:step={self._step_num}/last-estimated",
-        #                 last_estimated_eigens[idx].item(),
-        #                 idx,
-        #             )
-
-        # self._step_num += 1
-        # return 0 if loss_last is None else loss_last.item()
         return 0
 
     def compress_modules(self):
@@ -669,14 +598,24 @@ class GPTQModifier(Modifier, QuantizationMixin):
             self._log_writer.add_scalar(f'hessian_trace/module={name}', hessian_trace.item(), self._step_num_no_optimize)
             self._log_writer.add_scalar(f'eigenvalue_max/module={name}', eigenvalues_max.item(), self._step_num_no_optimize)
 
-            # log optimization params
-            logger.info(f"Optimiting lam using {self.opt_steps_num} iterations")
             if self.lam_optimize:
-                prev_loss = self._update_lam_param(
-                    lam_loss=self._lam_loss,
-                    module=module,
-                    next_modules=next_modules,
-                )
+
+                # log optimization params
+                logger.info(f"Optimiting lam using {self.opt_steps_num} iterations")
+
+                if self.lam_optimize_method == 'multistep':
+                    prev_loss = self._update_lam_param_multistep(
+                        lam_loss=self._lam_loss,
+                        module=module,
+                        next_modules=next_modules,
+                    )
+                elif self.lam_optimize_method == 'onestep':
+                    prev_loss = self._update_lam_param_onestep(
+                        module=module,
+                        next_modules=next_modules,
+                    )
+                else:
+                    raise ValueError(f"Invalid lam optimize method: {self.lam_optimize_method}")
 
             logger.info(f"Quantizing {name} using {num_samples} samples")
             with torch.no_grad(), align_module_device(

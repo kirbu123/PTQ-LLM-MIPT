@@ -1,15 +1,15 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:3"
+DEVICE="cuda:0"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 
 # MODEL_NAME="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-MODEL_NAME="facebook/opt-350m"
+# MODEL_NAME="facebook/opt-350m"
 # MODEL_NAME="facebook/opt-1.3b"
-# MODEL_NAME="facebook/opt-125m"
+MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
@@ -26,15 +26,16 @@ HES_REG_LAM=0.0
 NEXT_REG_LAM=0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
-LAM_LOSS_NAME="ElboPowerLawLoss" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
-NEXT_STRAT_NAME="BasicStrat" # AllLinears BasicStrat IgnoreNotOutProj
+LAM_OPTIMIZE_METHOD="onestep"
+LAM_LOSS_NAME="HessianLossTraceScaled" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
+NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 
 # Extended grid search parameters
-GRID_VALUES=(3 5 10)
+GRID_VALUES=(0 10 15 5)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/final/BasicStrat/ElboPowerLawLoss"
+OUTPUT_BASE_DIR="./quant_checkpoints/final/AllLinears/OneStep"
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -77,11 +78,11 @@ for grid_value in "${GRID_VALUES[@]}"; do
     mkdir -p "${OUTPUT_DIR}"
 
     # --model_base_path "${MODEL_BASE_PATH}" \
-    # --dataset_base_path "${DATASET_BASE_PATH}" \
 
     # Run the compression script
     python "${COMPRESSION_SCRIPT}" \
         --device "${DEVICE}" \
+        --dataset_base_path "${DATASET_BASE_PATH}" \
         --model_name "${MODEL_NAME}" \
         --dataset_name "${DATASET_NAME}" \
         --dataset_subset "${DATASET_SUBSET}" \
@@ -102,6 +103,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --next_loss_lam "${NEXT_LOSS_LAM}" \
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize \
+        --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         # --do_hessian_plot
 
     # Check exit status
