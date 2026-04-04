@@ -145,6 +145,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     opt_steps_num: int = 10
     k_next: int = 2
     do_hessian_plot: bool = False
+    reinitialize_lam: bool = False
     lam_optimize_method: str = 'multistep'
     lam_ls_ridge: float = 1e-4
     lam_pl_target_scale: float = 1.0
@@ -377,8 +378,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
             if self._lam_tensor.device != device:
                 self._lam_tensor = self._lam_tensor.to(device)
 
-            with torch.no_grad():
-                self._lam_tensor.fill_(float(self.next_reg_lam))
+            if self.reinitialize_lam:
+                with torch.no_grad():
+                    self._lam_tensor.fill_(float(self.next_reg_lam))
 
             self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
             self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -493,8 +495,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
         if self._lam_tensor.device != device:
             self._lam_tensor = self._lam_tensor.to(device)
         
-        with torch.no_grad():
-            self._lam_tensor.fill_(float(self.next_reg_lam))
+        if self.reinitialize_lam:
+            with torch.no_grad():
+                self._lam_tensor.fill_(float(self.next_reg_lam))
 
         H0 = self._hessians[module].to(device=device, dtype=torch.float32)
         d = H0.shape[0]

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:5"
+DEVICE="cuda:3"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -15,10 +15,10 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # Small models
 # MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="cerebras/Cerebras-GPT-111M"
-MODEL_NAME="ComCom/gpt2-small"
-# MODEL_NAME="EleutherAI/pythia-160m"
-# MODEL_NAME="EleutherAI/pythia-250m"
+# MODEL_NAME="ComCom/gpt2-small"
 # MODEL_NAME="EleutherAI/pythia-70m"
+# MODEL_NAME="EleutherAI/pythia-160m"
+MODEL_NAME="EleutherAI/pythia-14m-deduped"
 
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
@@ -28,7 +28,7 @@ NUM_CALIBRATION_SAMPLES=1024
 MAX_SEQ_LENGTH=1024
 SEED=0
 LAM_LR=3e-4
-K_NEXT=20
+K_NEXT=6
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
@@ -36,7 +36,7 @@ NEXT_REG_LAM=0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
-LAM_LOSS_NAME="ElboPowerLawLossTrunc" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
+LAM_LOSS_NAME="ElboPowerLawLoss" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
 NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 TASKS="wikitext,hellaswag,piqa,arc_easy"
 
@@ -45,7 +45,7 @@ GRID_VALUES=(0 20 40 60 80)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/final/AllLinears/multistep/small_models/ElboPowerLawLossTrunc"
+OUTPUT_BASE_DIR="./quant_checkpoints/final/W4A8/multistep/AllLinears/small_models"
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -115,7 +115,8 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --lam_optimize \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        # --do_hessian_plot
+        # --do_hessian_plot \
+        # --reinitialize_lam
 
     # Check exit status
     if [ ${PIPESTATUS[0]} -eq 0 ]; then

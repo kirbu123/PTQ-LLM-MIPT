@@ -214,10 +214,10 @@ def quantize_model_by_oneshot(
         hes_reg_lam=0.1, gptq=True, smoothquant=False, smoothquantreg=True, lam_optimize=False, do_hessian_plot=False,
         lam_optimize_method='multistep', lam_lr=3e-4, k_next=1, opt_steps_num=10,
         lam_loss_name='HessianLossNormed', next_strat_name='BasicStrat',
-        seed=42
+        seed=42, reinitialize_lam=False
     ):
 
-    output_dir = os.path.join(output_dir, model_name, dataset_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
+    output_dir = os.path.join(output_dir, model_name, dataset_name, lam_loss_name, f'smoothing_strength={smoothing_strength}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
 
     if smoothquant and smoothquantreg:
         ValueError('Evailable to use only one smooth method, picked two')
@@ -239,6 +239,7 @@ def quantize_model_by_oneshot(
             lam_optimize=lam_optimize,
             do_hessian_plot=do_hessian_plot,
             lam_lr=lam_lr,
+            reinitialize_lam=reinitialize_lam,
             k_next=k_next,
             opt_steps_num=opt_steps_num,
             lam_loss_name=lam_loss_name,
@@ -309,6 +310,10 @@ def parse_args():
     # Hessian plot
     parser.add_argument('--do_hessian_plot', action='store_true',
                    help='Enable hessian plot')
+
+    # Reinitialize lam parameter
+    parser.add_argument('--reinitialize_lam', action='store_true',
+                help='Re initialize lam parameter')
 
     # Lam optimize method
     parser.add_argument('--lam_optimize_method', type=str, default='multistep',
@@ -401,7 +406,8 @@ if __name__ == "__main__":
         opt_steps_num=args.opt_steps_num,
         lam_loss_name=args.lam_loss_name,
         next_strat_name=args.next_strat_name,
-        seed=args.seed
+        seed=args.seed,
+        reinitialize_lam=args.reinitialize_lam
     )
 
     # Run lm_eval evaluation
