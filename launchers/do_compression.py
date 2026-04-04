@@ -260,12 +260,13 @@ def quantize_model_by_oneshot(
         model_path = model_name
 
     model = AutoModelForCausalLM.from_pretrained(
-        model_path
+        model_path,
+        trust_remote_code=True
     )
 
     if 'gpt' in model_name.lower():
         model = convert_conv1d_to_linear(model, Conv1D)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -355,6 +356,10 @@ def parse_args():
     parser.add_argument('--next_strat_name', type=str, default='BasicStrat',
                     help='Next strategy selection name for next strat')
 
+    # Tasks
+    parser.add_argument('--tasks', type=str, default="wikitext,hellaswag,piqa,arc_easy,lambada_openai",
+                       help='Tasks to evaluate on')
+
     # Other parameters
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
@@ -405,7 +410,7 @@ if __name__ == "__main__":
         model_name=model_name,
         teacher_model=teacher_model,
         student_model=oneshot_model,
-        tasks="wikitext,hellaswag,piqa,arc_easy,lambada_openai",
+        tasks=args.tasks, # "wikitext,hellaswag,piqa,arc_easy,lambada_openai",
         num_fewshot=0,
         limit=500,
         device=args.device

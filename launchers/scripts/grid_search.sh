@@ -1,16 +1,25 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:0"
+DEVICE="cuda:5"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 
+# Large models
 # MODEL_NAME="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 # MODEL_NAME="facebook/opt-350m"
 # MODEL_NAME="facebook/opt-1.3b"
-MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
+
+# Small models
+# MODEL_NAME="facebook/opt-125m"
+# MODEL_NAME="cerebras/Cerebras-GPT-111M"
+MODEL_NAME="ComCom/gpt2-small"
+# MODEL_NAME="EleutherAI/pythia-160m"
+# MODEL_NAME="EleutherAI/pythia-250m"
+# MODEL_NAME="EleutherAI/pythia-70m"
+
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
 SCHEME="W4A8"
@@ -19,23 +28,24 @@ NUM_CALIBRATION_SAMPLES=1024
 MAX_SEQ_LENGTH=1024
 SEED=0
 LAM_LR=3e-4
-K_NEXT=1
+K_NEXT=20
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
 NEXT_REG_LAM=0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
-LAM_OPTIMIZE_METHOD="onestep"
-LAM_LOSS_NAME="HessianLossTraceScaled" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
+LAM_OPTIMIZE_METHOD="multistep"
+LAM_LOSS_NAME="ElboPowerLawLossTrunc" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
 NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
+TASKS="wikitext,hellaswag,piqa,arc_easy"
 
 # Extended grid search parameters
-GRID_VALUES=(0 10 15 5)
+GRID_VALUES=(0 20 40 60 80)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/final/AllLinears/OneStep"
+OUTPUT_BASE_DIR="./quant_checkpoints/final/AllLinears/multistep/small_models/ElboPowerLawLossTrunc"
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -78,11 +88,11 @@ for grid_value in "${GRID_VALUES[@]}"; do
     mkdir -p "${OUTPUT_DIR}"
 
     # --model_base_path "${MODEL_BASE_PATH}" \
+    # --dataset_base_path "${DATASET_BASE_PATH}" \
 
     # Run the compression script
     python "${COMPRESSION_SCRIPT}" \
         --device "${DEVICE}" \
-        --dataset_base_path "${DATASET_BASE_PATH}" \
         --model_name "${MODEL_NAME}" \
         --dataset_name "${DATASET_NAME}" \
         --dataset_subset "${DATASET_SUBSET}" \
@@ -90,11 +100,11 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --targets "${TARGETS}" \
         --num_calibration_samples "${NUM_CALIBRATION_SAMPLES}" \
         --max_seq_length "${MAX_SEQ_LENGTH}" \
-        --seed "${SEED}" \
+        --seed "${grid_value}" \
         --output_dir "${OUTPUT_DIR}" \
         --hes_reg_lam "${HES_REG_LAM}" \
         --lam_lr "${LAM_LR}" \
-        --k_next "${grid_value}" \
+        --k_next "${K_NEXT}" \
         --opt_steps_num "${opt_steps_num}" \
         --lam_loss_name "${LAM_LOSS_NAME}" \
         --next_strat_name "${NEXT_STRAT_NAME}" \
@@ -104,6 +114,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
+        --tasks "${TASKS}" \
         # --do_hessian_plot
 
     # Check exit status

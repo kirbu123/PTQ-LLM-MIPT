@@ -377,6 +377,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
             if self._lam_tensor.device != device:
                 self._lam_tensor = self._lam_tensor.to(device)
 
+            with torch.no_grad():
+                self._lam_tensor.fill_(float(self.next_reg_lam))
+
             self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
             self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 self._lam_optimizer, 
@@ -489,6 +492,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
         if self._lam_tensor.device != device:
             self._lam_tensor = self._lam_tensor.to(device)
+        
+        with torch.no_grad():
+            self._lam_tensor.fill_(float(self.next_reg_lam))
 
         H0 = self._hessians[module].to(device=device, dtype=torch.float32)
         d = H0.shape[0]
@@ -549,7 +555,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
             postfixes = []
             postfix = name.split('.')[-1]
-            if self.lam_optimize and (postfix == "out_proj" or postfix.startswith("fc")):
+            if self.lam_optimize:
                 postfixes = self._next_strat(postfix)
 
             if len(postfixes) == 0:
