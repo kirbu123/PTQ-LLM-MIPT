@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:3"
+DEVICE="cuda:2"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -16,9 +16,13 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="cerebras/Cerebras-GPT-111M"
 # MODEL_NAME="ComCom/gpt2-small"
+
+# Pythia models
+MODEL_NAME="EleutherAI/gpt-neo-125m"
+# MODEL_NAME="EleutherAI/pythia-14m-deduped"
+# MODEL_NAME="EleutherAI/pythia-31m"
 # MODEL_NAME="EleutherAI/pythia-70m"
 # MODEL_NAME="EleutherAI/pythia-160m"
-MODEL_NAME="EleutherAI/pythia-14m-deduped"
 
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
@@ -41,11 +45,11 @@ NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 TASKS="wikitext,hellaswag,piqa,arc_easy"
 
 # Extended grid search parameters
-GRID_VALUES=(0 20 40 60 80)
+GRID_VALUES=(90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/final/W4A8/multistep/AllLinears/small_models"
+OUTPUT_BASE_DIR="./quant_checkpoints/final/AllLinears/small_models" # no-optimize
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -112,11 +116,11 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --next_reg_lam "${NEXT_REG_LAM}" \
         --next_loss_lam "${NEXT_LOSS_LAM}" \
         --kernel_mode "${KERNEL_MODE}" \
-        --lam_optimize \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
+        --lam_optimize \
         # --do_hessian_plot \
-        # --reinitialize_lam
+        # --reinitialize_lam \
 
     # Check exit status
     if [ ${PIPESTATUS[0]} -eq 0 ]; then

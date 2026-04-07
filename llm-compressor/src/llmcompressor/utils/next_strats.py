@@ -3,13 +3,13 @@ import torch.nn as nn
 from llmcompressor.modifiers.utils.kernels import apply_conv
 from abc import abstractmethod
 
-__all__ = ["BasicStrat", "AllLinears"]
+__all__ = ["BasicStrat", "AllLinears", "IgnoreNotOutProj"]
 
 def BasicStrat(postfix: str):
   return [postfix]
 
 linear_layers = [
-  'out_proj', 'fc1', 'fc2', 'o_proj', 'gate_proj', 'c_fc', 'dense', 'dense_h_to_4h', 'dense_4h_to_h'
+  'out_proj', 'fc1', 'fc2', 'o_proj', 'gate_proj', 'c_fc', 'dense', # 'dense_h_to_4h', 'dense_4h_to_h'
 ]
 def AllLinears(postfix: str):
   global linear_layers
