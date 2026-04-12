@@ -13,16 +13,17 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 
 # Small models
-# MODEL_NAME="facebook/opt-125m"
+MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="cerebras/Cerebras-GPT-111M"
 # MODEL_NAME="ComCom/gpt2-small"
 
 # Pythia models
-MODEL_NAME="EleutherAI/gpt-neo-125m"
+# MODEL_NAME="EleutherAI/gpt-neo-125m"
 # MODEL_NAME="EleutherAI/pythia-14m-deduped"
 # MODEL_NAME="EleutherAI/pythia-31m"
 # MODEL_NAME="EleutherAI/pythia-70m"
 # MODEL_NAME="EleutherAI/pythia-160m"
+# MODEL_NAME="openai-community/gpt2"
 
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
@@ -45,11 +46,11 @@ NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 TASKS="wikitext,hellaswag,piqa,arc_easy"
 
 # Extended grid search parameters
-GRID_VALUES=(90)
+GRID_VALUES=(0 10 20 30 40)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/final/AllLinears/small_models" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/smooth/W4A8/multistep/AllLinears/small_models/" # no-optimize
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -119,6 +120,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
         --lam_optimize \
+        --smoothquant \
         # --do_hessian_plot \
         # --reinitialize_lam \
 

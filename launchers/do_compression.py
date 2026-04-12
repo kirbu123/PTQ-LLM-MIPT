@@ -2,6 +2,10 @@ import argparse
 import os
 import sys
 sys.path.append('./llm-compressor/src')
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# from gpt2_conv_linear import convert_conv1d_to_linear, convert_linear_to_conv1d
+
 from llmcompressor.modifiers.quantization import GPTQModifier
 from llmcompressor.modifiers.smoothquant import SmoothQuantModifier, SmoothQuantRegModifier
 from datasets import load_dataset
@@ -267,6 +271,7 @@ def quantize_model_by_oneshot(
 
     if 'gpt' in model_name.lower():
         model = convert_conv1d_to_linear(model, Conv1D)
+
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
