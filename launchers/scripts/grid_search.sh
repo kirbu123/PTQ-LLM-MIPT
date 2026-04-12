@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:2"
+DEVICE="cuda:1"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -13,14 +13,14 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 
 # Small models
-MODEL_NAME="facebook/opt-125m"
+# MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="cerebras/Cerebras-GPT-111M"
 # MODEL_NAME="ComCom/gpt2-small"
 
 # Pythia models
 # MODEL_NAME="EleutherAI/gpt-neo-125m"
 # MODEL_NAME="EleutherAI/pythia-14m-deduped"
-# MODEL_NAME="EleutherAI/pythia-31m"
+MODEL_NAME="EleutherAI/pythia-31m"
 # MODEL_NAME="EleutherAI/pythia-70m"
 # MODEL_NAME="EleutherAI/pythia-160m"
 # MODEL_NAME="openai-community/gpt2"
@@ -33,7 +33,7 @@ NUM_CALIBRATION_SAMPLES=1024
 MAX_SEQ_LENGTH=1024
 SEED=0
 LAM_LR=3e-4
-K_NEXT=6
+K_NEXT=0
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
@@ -41,16 +41,16 @@ NEXT_REG_LAM=0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
-LAM_LOSS_NAME="ElboPowerLawLoss" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
+LAM_LOSS_NAME="HessianLossTraceOnlyScaled" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
 NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 TASKS="wikitext,hellaswag,piqa,arc_easy"
 
 # Extended grid search parameters
-GRID_VALUES=(0 10 20 30 40)
+GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/smooth/W4A8/multistep/AllLinears/small_models/" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/smooth/W4A8/multistep/AllLinears/small_models/no-optimize" # no-optimize
 LOG_DIR="./grid_search_logs"
 
 # Error handling

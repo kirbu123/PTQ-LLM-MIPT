@@ -39,6 +39,12 @@ BLOOM_SMOOTHQUANT_MAPPINGS: List[LayerMap] = [
         smooth_layers="re:.*post_attention_layernorm",
     ),
 ]
+
+# GPT-NeoX (GPTNeoXForCausalLM). EleutherAI Pythia families such as
+# EleutherAI/pythia-{N}m (e.g. 14m, 31m, 70m, 160m, …), *-deduped variants, and
+# pythia-*b sizes share this class. Same FFN split as Bloom — only dense_h_to_4h with
+# post_attention_layernorm (not dense_4h_to_h), analogous to OPT fc1-only.
+GPT_NEOX_SMOOTHQUANT_MAPPINGS: List[LayerMap] = BLOOM_SMOOTHQUANT_MAPPINGS
 PHI3_VISION_SMOOTHQUANT_MAPPINGS: List[LayerMap] = [
     LayerMap(
         balance_layers=["re:.*qkv_proj"],
@@ -92,6 +98,8 @@ MAPPINGS_REGISTRY: Dict[str, List[LayerMap]] = {
     "Phi3VForCausalLM": PHI3_VISION_SMOOTHQUANT_MAPPINGS,
     "WhisperForConditionalGeneration": WHISPER_V2_SMOOTHQUANT_MAPPINGS,
     "OPTForCausalLM": OPT_SMOOTHQUANT_MAPPINGS,
+    # EleutherAI/pythia-*m, deduped variants, and other GPT-NeoX causal LMs
+    "GPTNeoXForCausalLM": GPT_NEOX_SMOOTHQUANT_MAPPINGS,
     "DeepseekV2ForCausalLM": DEEPSEEK_V2_SMOOTHQUANT_MAPPINGS,
 }
 
