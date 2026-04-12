@@ -60,6 +60,18 @@ WHISPER_V2_SMOOTHQUANT_MAPPINGS: List[LayerMap] = [
     ),
 ]
 
+# Per-layer final_layer_norm only — avoids matching decoder.final_layer_norm.
+OPT_SMOOTHQUANT_MAPPINGS: List[LayerMap] = [
+    LayerMap(
+        balance_layers=["re:.*q_proj", "re:.*k_proj", "re:.*v_proj"],
+        smooth_layers="re:.*self_attn_layer_norm",
+    ),
+    LayerMap(
+        balance_layers=["re:.*fc1"],
+        smooth_layers=r"re:.*layers\.\d+\.final_layer_norm",
+    ),
+]
+
 DEEPSEEK_V2_SMOOTHQUANT_MAPPINGS: List[LayerMap] = [
     LayerMap(
         balance_layers=["re:.*q_proj", "re:.*kv_a_proj_with_mqa"],
@@ -79,6 +91,7 @@ MAPPINGS_REGISTRY: Dict[str, List[LayerMap]] = {
     "ChatGLMForConditionalGeneration": BLOOM_SMOOTHQUANT_MAPPINGS,
     "Phi3VForCausalLM": PHI3_VISION_SMOOTHQUANT_MAPPINGS,
     "WhisperForConditionalGeneration": WHISPER_V2_SMOOTHQUANT_MAPPINGS,
+    "OPTForCausalLM": OPT_SMOOTHQUANT_MAPPINGS,
     "DeepseekV2ForCausalLM": DEEPSEEK_V2_SMOOTHQUANT_MAPPINGS,
 }
 
