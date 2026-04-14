@@ -229,26 +229,22 @@ class GPTQModifier(Modifier, QuantizationMixin):
         self._hessian_log_dir = os.path.join(self.log_dir, 'hessians_info')
 
         self._step_num_no_optimize = 0
-        if self.lam_optimize:
-            self._lam_tensor = torch.nn.Parameter(
-                torch.full((self.k_next,), self.next_reg_lam, dtype=torch.float32),
-                requires_grad=True
-            )
-            self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
-            self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    self._lam_optimizer, 
-                    T_max=self.opt_steps_num,
-                )
-            self._lam_loss = LOSS_DICT[self.lam_loss_name]()
-            self._next_strat = NEXT_STRATS_DICT[self.next_strat_name]
-            self._with_eigens = self._lam_loss.get_with_eigens()
-            self._step_num = 0
-        else:
-            self._lam_tensor = None
-            self._with_eigens = False
 
-        if self.lam_optimize_method == 'onestep':
-            self._with_eigens = False
+        self._lam_tensor = torch.nn.Parameter(
+            torch.full((self.k_next,), self.next_reg_lam, dtype=torch.float32),
+            requires_grad=True
+        )
+        self._lam_optimizer = torch.optim.Adam([self._lam_tensor], lr=self.lam_lr)
+        self._lam_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self._lam_optimizer, 
+                T_max=self.opt_steps_num,
+            )
+        self._lam_loss = LOSS_DICT[self.lam_loss_name]()
+        self._next_strat = NEXT_STRATS_DICT[self.next_strat_name]
+        self._with_eigens = self._lam_loss.get_with_eigens()
+        self._step_num = 0
+
+        self._with_eigens = self.lam_optimize and self.lam_optimize_method == 'multistep'
 
         return True
 
@@ -349,7 +345,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
         # Get next module and its input (current module's output)
         module_next = None
         inp_next = None
-        
+
         if self.next_loss_lam != 0.:
             # Find the next module in the sequential targets
             module_next = self._get_next_module(module)
@@ -558,8 +554,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
 
             postfixes = []
             postfix = name.split('.')[-1]
-            if self.lam_optimize:
-                postfixes = self._next_strat(postfix)
+            postfixes = self._next_strat(postfix)
 
             if len(postfixes) == 0:
                 mapped_lists['names'][postfix] = []
@@ -604,8 +599,10 @@ class GPTQModifier(Modifier, QuantizationMixin):
             # log out-of-optimization params
             hessian_trace = self._eigens[module]['hessian_trace']
             eigenvalues_max = self._eigens[module]['eigenvalues_max']
-            self._log_writer.add_scalar(f'hessian_trace/module={name}', hessian_trace.item(), self._step_num_no_optimize)
-            self._log_writer.add_scalar(f'eigenvalue_max/module={name}', eigenvalues_max.item(), self._step_num_no_optimize)
+            if hessian_trace is not None:
+                self._log_writer.add_scalar(f'hessian_trace/module={name}', hessian_trace.item(), self._step_num_no_optimize)
+            if eigenvalues_max is not None:
+                self._log_writer.add_scalar(f'eigenvalue_max/module={name}', eigenvalues_max.item(), self._step_num_no_optimize)
 
             if self.lam_optimize:
 

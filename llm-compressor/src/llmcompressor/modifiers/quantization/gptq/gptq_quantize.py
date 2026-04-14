@@ -71,6 +71,8 @@ def accumulate_hessian(
 
     # Eigenvalues and eigenvectors calculation
     eigenvalues, eigenvectors = None, None
+    eigenvalues_max, hessian_trace = None, None
+
     h = (H + H.T) / 2
 
     if with_eigens:
@@ -79,14 +81,9 @@ def accumulate_hessian(
         eigenvalues = S
         eigenvectors = U
 
-        # DEBUG
-        # eigenvalues = torch.full((H.shape[0],), 1e-5, dtype=H.dtype, device=H.device)
-        # eigenvectors = torch.full(H.shape, 1e-5, dtype=H.dtype, device=H.device)
-
-
-    hessian_trace = torch.trace(H)
-    eigenvalues_max = compute_max_eigenval(h)
-    eigenvalues_max = torch.tensor(eigenvalues_max, dtype=torch.float32, device=H.device, requires_grad=True)
+        hessian_trace = torch.trace(H)
+        eigenvalues_max = compute_max_eigenval(h)
+        eigenvalues_max = torch.tensor(eigenvalues_max, dtype=torch.float32, device=H.device, requires_grad=True)
 
     eigens = {
         "eigenvalues": eigenvalues,
@@ -245,6 +242,42 @@ def accumulate_hessian_next_reg(
 
     return H, num_samples
 
+def apply_next_strategy(
+    H: torch.Tensor,
+    next_modules: torch.nn.Module | None = None,
+    lam_tensor: torch.Tensor | None = 0.,
+    kernel_mode: str = "default"
+) -> torch.Tensor:
+    """
+    Apply next strategy to the Hessian
+
+    Args:
+        H: Hessian tensor
+        next_modules: list of next modules
+        lam_tensor: list of lambda tensors
+        kernel_mode: kernel mode
+
+    Returns:
+        Hessian tensor
+    """
+
+    Q = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
+    P = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
+
+    try:
+        for i, module_next in enumerate(next_modules):
+            if module_next is not None:
+                Wi = module_next.weight.data.clone().to(H.device)
+                P = Wi @ P  # accumulate product
+                Q += lam_tensor[i] * apply_conv(P.T @ P, mode=kernel_mode)
+
+        H = H @ Q
+
+    except RuntimeError:
+        pass
+
+    return H
+
 
 def quantize_weight(
     module: torch.nn.Module,
@@ -271,21 +304,20 @@ def quantize_weight(
     final_shape = module.weight.shape
     final_dtype = module.weight.dtype
     W = module.weight.clone()
+
     # Caclulate Hessian
     H = hessians_dict[module]  # unfortunately python does not have a `move` keyword
     if next_modules is not None and lam_tensor is not None:
-        try:
-            for i, module_next in enumerate(next_modules):
-                if module_next is not None:
-                    H_next = hessians_dict[module_next]
-                    H += lam_tensor[i] * apply_conv(H_next, mode=kernel_mode)
-        except RuntimeError:
-            pass
-    
-    # debug_mode
-    # A = torch.randn(H.shape[0], H.shape[1], device=H.device, dtype=GPTQ_PRECISION)
-    # H = ((A + A.T) / 2) * 0.01
-    # H = torch.eye(H.shape[0], device=H.device, dtype=GPTQ_PRECISION) * 0.1
+        H = apply_next_strategy(H, next_modules, lam_tensor, kernel_mode)
+
+        # try:
+        #     for i, module_next in enumerate(next_modules):
+        #         if module_next is not None:
+        #             H_next = hessians_dict[module_next]
+        #             H += lam_tensor[i] * apply_conv(H_next, mode=kernel_mode)
+        # except RuntimeError:
+        #     pass
+
 
     # del hessians_dict[module]  # so we have to delete the original reference manually
 

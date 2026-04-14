@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:1"
+DEVICE="cuda:7"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -13,14 +13,14 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 
 # Small models
-# MODEL_NAME="facebook/opt-125m"
+MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="cerebras/Cerebras-GPT-111M"
 # MODEL_NAME="ComCom/gpt2-small"
 
 # Pythia models
 # MODEL_NAME="EleutherAI/gpt-neo-125m"
 # MODEL_NAME="EleutherAI/pythia-14m-deduped"
-MODEL_NAME="EleutherAI/pythia-31m"
+# MODEL_NAME="EleutherAI/pythia-31m"
 # MODEL_NAME="EleutherAI/pythia-70m"
 # MODEL_NAME="EleutherAI/pythia-160m"
 # MODEL_NAME="openai-community/gpt2"
@@ -33,11 +33,11 @@ NUM_CALIBRATION_SAMPLES=1024
 MAX_SEQ_LENGTH=1024
 SEED=0
 LAM_LR=3e-4
-K_NEXT=0
+K_NEXT=6
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
-NEXT_REG_LAM=0.0
+NEXT_REG_LAM=1.0 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
@@ -50,7 +50,7 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/smooth/W4A8/multistep/AllLinears/small_models/no-optimize" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/idea" # no-optimize
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -119,8 +119,8 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        --lam_optimize \
-        --smoothquant \
+        # --lam_optimize \
+        # --smoothquant \
         # --do_hessian_plot \
         # --reinitialize_lam \
 
