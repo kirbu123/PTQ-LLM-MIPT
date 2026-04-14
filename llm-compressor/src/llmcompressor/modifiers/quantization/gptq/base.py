@@ -241,10 +241,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
             )
         self._lam_loss = LOSS_DICT[self.lam_loss_name]()
         self._next_strat = NEXT_STRATS_DICT[self.next_strat_name]
-        self._with_eigens = self._lam_loss.get_with_eigens()
         self._step_num = 0
 
-        self._with_eigens = self.lam_optimize and self.lam_optimize_method == 'multistep'
+        self._with_eigens = self._lam_loss.get_with_eigens() and self.lam_optimize and self.lam_optimize_method == 'multistep'
 
         return True
 
