@@ -17,6 +17,15 @@ from llmcompressor.modifiers.utils.kernels import apply_conv
 from llmcompressor.modifiers.utils.eigen_count import compute_max_eigenval
 from llmcompressor.observers.base import Observer
 from llmcompressor.pytorch.utils.helpers import tensor_sparsity
+from llmcompressor.modifiers.quantization.gptq.utils import save_matrix_results
+
+import torch
+from loguru import logger
+from torch.nn import Module
+import torch
+import torch.nn as nn
+import os
+import pandas as pd
 
 GPTQ_PRECISION = torch.float32
 
@@ -260,6 +269,7 @@ def apply_next_strategy(
     Returns:
         Hessian tensor
     """
+    H_init = H.clone()
 
     Q = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
     P = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
@@ -276,7 +286,7 @@ def apply_next_strategy(
     except RuntimeError:
         pass
 
-    return H
+    return H, H_init, Q
 
 
 def quantize_weight(
@@ -287,7 +297,9 @@ def quantize_weight(
     percdamp: float = 0.01,
     next_modules: torch.nn.Module | None = None,
     lam_tensor: torch.Tensor | None = 0.,
-    kernel_mode: str = 'default'
+    kernel_mode: str = 'default',
+    name: str = None,
+    save_dir: str = None
 ) -> tuple[float, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor]:
     """
     Quantize a module weight according to the GPTQ algorithm
@@ -308,7 +320,18 @@ def quantize_weight(
     # Caclulate Hessian
     H = hessians_dict[module]  # unfortunately python does not have a `move` keyword
     if next_modules is not None and lam_tensor is not None:
-        H = apply_next_strategy(H, next_modules, lam_tensor, kernel_mode)
+        H, H_init, Q = apply_next_strategy(H, next_modules, lam_tensor, kernel_mode)
+
+        if save_dir is not None:
+            save_matrix_results(
+                module, f"{name}_H_init", M=H_init, save_dir=save_dir  
+            )
+            save_matrix_results(
+                module, f"{name}_H_opt", M=H, save_dir=save_dir  
+            )
+            save_matrix_results(
+                module, f"{name}_Q", M=Q, save_dir=save_dir  
+            )
 
         # try:
         #     for i, module_next in enumerate(next_modules):
