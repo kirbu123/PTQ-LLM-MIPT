@@ -80,17 +80,17 @@ def accumulate_hessian(
 
     # Eigenvalues and eigenvectors calculation
     eigenvalues, eigenvectors = None, None
-    eigenvalues_max, hessian_trace = None, None
-
-    h = (H + H.T) / 2
+    eigenvalues_max = None
+    hessian_trace = torch.trace(H)
 
     if with_eigens:
+        h = (H + H.T) / 2
+
         U, S, Vh = torch.linalg.svd(h, full_matrices=False)
 
         eigenvalues = S
         eigenvectors = U
 
-        hessian_trace = torch.trace(H)
         eigenvalues_max = compute_max_eigenval(h)
         eigenvalues_max = torch.tensor(eigenvalues_max, dtype=torch.float32, device=H.device, requires_grad=True)
 

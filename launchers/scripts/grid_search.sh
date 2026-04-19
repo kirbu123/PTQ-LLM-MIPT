@@ -33,7 +33,7 @@ NUM_CALIBRATION_SAMPLES=1024
 MAX_SEQ_LENGTH=1024
 SEED=0
 LAM_LR=3e-4
-K_NEXT=1
+K_NEXT=6
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
@@ -41,12 +41,12 @@ NEXT_REG_LAM=0.5 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
-LAM_LOSS_NAME="HessianLossTraceOnlyScaled" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos
+LAM_LOSS_NAME="HessianLossTraceReformulatedInverse" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos HessianLossTraceReformulatedInverse HessianLossTraceReformulated
 NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 TASKS="wikitext,hellaswag,piqa,arc_easy"
 
 # Extended grid search parameters
-GRID_VALUES=(40)
+GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
@@ -119,8 +119,8 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        --do_hessian_plot \
-        --smoothquant \
+        # --smoothquant \
+        # --do_hessian_plot \
         # --lam_optimize \
         # --reinitialize_lam \
 
