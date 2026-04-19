@@ -284,7 +284,7 @@ def apply_next_strategy(
         H = H @ Q
 
     except RuntimeError:
-        pass
+        return H_init, H_init, None
 
     return H, H_init, Q
 
@@ -322,7 +322,7 @@ def quantize_weight(
     if next_modules is not None and lam_tensor is not None:
         H, H_init, Q = apply_next_strategy(H, next_modules, lam_tensor, kernel_mode)
 
-        if save_dir is not None:
+        if save_dir is not None and Q is not None:
             save_matrix_results(
                 module, f"{name}_H_init", M=H_init, save_dir=save_dir  
             )

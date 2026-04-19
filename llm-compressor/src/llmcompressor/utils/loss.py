@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
-from llmcompressor.modifiers.utils.kernels import apply_conv
 from abc import abstractmethod
 
-__all__ = ["HessianLossNormed", "HessianLoss", "HessianLossNormCos", "HessianLossSoftCos", "HessianLossTrace"]
+from llmcompressor.modifiers.utils.kernels import apply_conv
+from llmcompressor.modifiers.quantization.gptq.gptq_quantize import apply_next_strategy
+
+__all__ = ["HessianLossNormed", "HessianLoss", "HessianLossNormCos", "HessianLossSoftCos", "HessianLossTrace", "HessianLossTraceReformulated", "HessianLossTraceReformulatedInverse"]
 
 class BasicLoss(nn.Module):
     def __init__(self):
@@ -311,31 +313,35 @@ class HessianLossTraceReformulated(BasicLoss):
             reg_coef=1e-3,
             neg_weight=0.1):
 
-        trace = eigens[module]['hessian_trace']
         H = hessians[module]
         dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
-        max_eigen_val = eigens[module]['eigenvalues_max']
 
-        # try:
+        if next_modules is None:
+            return dummy_loss, None
+
         is_lam = False
-
-        for i, module_next in enumerate(next_modules):
+        for module_next in next_modules:
             if module_next is not None:
                 is_lam = True
-                trace += lam[i] * eigens[module_next]['hessian_trace']
-                max_eigen_val = max_eigen_val + lam[i] * eigens[module_next]['eigenvalues_max']
+                break
 
         if not is_lam:
             return dummy_loss, None
 
-        loss = (trace + max_eigen_val) / 1000.
+        H_eff, H_init, Q = apply_next_strategy(H, next_modules, lam, kernel_mode)
+
+        if Q is None:
+            return dummy_loss, None
+
+        try:
+            loss = torch.trace(H_eff) / 1000.0
+        except RuntimeError:
+            return dummy_loss, None
+
         return loss, None
 
-class HessianLossTraceReformulatedInverse(BasicLoss):
-    def __init__(self):
-        super().__init__()
-        self.with_eigens = False
 
+class HessianLossTraceReformulatedInverse(HessianLossTraceReformulated):
     def forward(
             self,
             lam,
@@ -349,26 +355,8 @@ class HessianLossTraceReformulatedInverse(BasicLoss):
             reg_coef=1e-3,
             neg_weight=0.1):
 
-        trace = eigens[module]['hessian_trace']
-        H = hessians[module]
-        dummy_loss = torch.tensor(0.0, dtype=torch.float32, device=H.device, requires_grad=True)
-        max_eigen_val = eigens[module]['eigenvalues_max']
-
-        # try:
-        is_lam = False
-
-        for i, module_next in enumerate(next_modules):
-            if module_next is not None:
-                is_lam = True
-                trace += lam[i] * eigens[module_next]['hessian_trace']
-                max_eigen_val = max_eigen_val + lam[i] * eigens[module_next]['eigenvalues_max']
-
-        if not is_lam:
-            return dummy_loss, None
-
-        loss = (trace + max_eigen_val) / 1000.
-        return loss, None
-
+        loss, _ = super().forward(lam, module, next_modules, hessians, eigens, kernel_mode, eps, proj_dim, reg_coef, neg_weight)
+        return -loss, None
 
 
 class HessianLossTrace(BasicLoss):
