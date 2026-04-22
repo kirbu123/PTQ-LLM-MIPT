@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:0"
+DEVICE="cuda:1"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -13,7 +13,7 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 
 # Small models
-MODEL_NAME="facebook/opt-125m"
+# MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="cerebras/Cerebras-GPT-111M"
 # MODEL_NAME="ComCom/gpt2-small"
 
@@ -24,6 +24,7 @@ MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="EleutherAI/pythia-70m"
 # MODEL_NAME="EleutherAI/pythia-160m"
 # MODEL_NAME="openai-community/gpt2"
+MODEL_NAME="facebook/opt-6.7b"
 
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
@@ -41,7 +42,12 @@ NEXT_REG_LAM=0.5 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
-LAM_LOSS_NAME="HessianLossTraceReformulatedInverse" # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc ReformulatedElboPowerLawLossTrunc HessianLossSoftCos HessianLossTraceReformulatedInverse HessianLossTraceReformulated
+LAM_LOSS_NAME="HessianLossTraceOnlyScaledReformulated" 
+# ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc 
+# ReformulatedElboPowerLawLossTrunc HessianLossSoftCos 
+# HessianLossTraceReformulatedInverse HessianLossTraceReformulated
+# HessianLossTraceOnlyScaledReformulated HessianLossTraceOnlyScaledReformulatedInverse
+
 NEXT_STRAT_NAME="AllLinears" # AllLinears BasicStrat IgnoreNotOutProj
 TASKS="wikitext,hellaswag,piqa,arc_easy"
 
