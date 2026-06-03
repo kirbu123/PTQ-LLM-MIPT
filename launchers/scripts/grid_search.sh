@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:1"
+DEVICE="cuda:2"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 
 # Large models
 # MODEL_NAME="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-# MODEL_NAME="facebook/opt-350m"
+MODEL_NAME="facebook/opt-350m"
 # MODEL_NAME="facebook/opt-1.3b"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 
@@ -24,7 +24,7 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 # MODEL_NAME="EleutherAI/pythia-70m"
 # MODEL_NAME="EleutherAI/pythia-160m"
 # MODEL_NAME="openai-community/gpt2"
-MODEL_NAME="facebook/opt-6.7b"
+# MODEL_NAME="facebook/opt-6.7b"
 
 DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
@@ -42,7 +42,7 @@ NEXT_REG_LAM=0.5 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
-LAM_LOSS_NAME="HessianLossTraceOnlyScaledReformulated" 
+LAM_LOSS_NAME="ElboPowerLawLoss"
 # ElboPowerLawLoss HessianLossTraceOnlyScaled ElboPowerLawLossTrunc 
 # ReformulatedElboPowerLawLossTrunc HessianLossSoftCos 
 # HessianLossTraceReformulatedInverse HessianLossTraceReformulated
@@ -56,7 +56,8 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/idea/optimized" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/dptq/no-optimize" # no-optimize
+
 LOG_DIR="./grid_search_logs"
 
 # Error handling
@@ -125,8 +126,8 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        --lam_optimize \
-        # --smoothquant \
+        --smoothquant \
+        # --lam_optimize \
         # --do_hessian_plot \
         # --reinitialize_lam \
 

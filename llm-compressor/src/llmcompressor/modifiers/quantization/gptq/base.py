@@ -33,8 +33,13 @@ from llmcompressor.modifiers.quantization.gptq.gptq_quantize import (
     accumulate_hessian,
     accumulate_hessian_next_reg,
     make_empty_hessian,
-    quantize_weight,
+    # quantize_weight,
 )
+
+from llmcompressor.modifiers.quantization.gptq.dptq_quantize import (
+    quantize_weight
+)
+
 from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
 from llmcompressor.utils.metric_logging import CompressionLogger
