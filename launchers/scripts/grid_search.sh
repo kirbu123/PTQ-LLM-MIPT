@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:2"
+DEVICE="cuda:3"
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -38,7 +38,7 @@ K_NEXT=6
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
-NEXT_REG_LAM=0.5 # for multistep: 0.0
+NEXT_REG_LAM=0.0 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
@@ -56,7 +56,7 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/dptq/no-optimize" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/smooth/optimize" # no-optimize
 
 LOG_DIR="./grid_search_logs"
 
@@ -127,7 +127,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
         --smoothquant \
-        # --lam_optimize \
+        --lam_optimize \
         # --do_hessian_plot \
         # --reinitialize_lam \
 
