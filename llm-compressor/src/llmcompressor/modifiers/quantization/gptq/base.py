@@ -33,12 +33,11 @@ from llmcompressor.modifiers.quantization.gptq.gptq_quantize import (
     accumulate_hessian,
     accumulate_hessian_next_reg,
     make_empty_hessian,
-    quantize_weight,
+    quantize_weight as gptq_quantize_weight,
 )
-
-# from llmcompressor.modifiers.quantization.gptq.dptq_quantize import (
-#     quantize_weight
-# )
+from llmcompressor.modifiers.quantization.gptq.dptq_quantize import (
+    quantize_weight as dptq_quantize_weight,
+)
 
 from llmcompressor.modifiers.quantization.quantization import QuantizationMixin
 from llmcompressor.sentinel import Sentinel
@@ -144,6 +143,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
     next_reg_lam: float = 0.0
     next_loss_lam: float = 0.0
     kernel_mode: str = 'default'
+    dptq: bool = False
     lam_lr: float = 3e-4
     lam_loss_name: str = 'HessianLossNormed'
     next_strat_name: str = 'BasicStrat'
@@ -633,6 +633,9 @@ class GPTQModifier(Modifier, QuantizationMixin):
             ), self._maybe_onload_hessian(module), CompressionLogger(
                 module
             ) as comp_logger:
+                quantize_weight_fn = (
+                    dptq_quantize_weight if self.dptq else gptq_quantize_weight
+                )
 
                 # if self.do_hessian_plot:
                 #     H_cal = self._hessians[module].clone()
@@ -640,7 +643,7 @@ class GPTQModifier(Modifier, QuantizationMixin):
                 #         module, f"{name}_fp", H_cal=H_cal, save_dir=self._hessian_log_dir
                 #     )
 
-                loss, quantized_weight, W_adj, scale, zero_point, g_idx, updated_hessian = quantize_weight(
+                loss, quantized_weight, W_adj, scale, zero_point, g_idx, updated_hessian = quantize_weight_fn(
                     module=module,
                     quant_args=quant_args,
                     hessians_dict=self._hessians,

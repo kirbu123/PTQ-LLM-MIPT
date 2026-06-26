@@ -1,7 +1,13 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:3"
+DEVICE="cuda:1"
+ACTION="${1:-dptq}"
+
+if [[ "${ACTION}" != "gptq" && "${ACTION}" != "dptq" ]]; then
+    echo "Invalid action: ${ACTION}. Use 'gptq' or 'dptq'."
+    exit 1
+fi
 
 MODEL_BASE_PATH="/home/buka2004/data/weights/"
 DATASET_BASE_PATH="/home/buka2004/data/datasets/"
@@ -56,7 +62,7 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/smooth/optimize" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/dptq-2/no-optimize" # no-optimize
 
 LOG_DIR="./grid_search_logs"
 
@@ -85,6 +91,7 @@ log_message "Starting grid search"
 log_message "Values to test: ${GRID_VALUES[*]}"
 log_message "Model: $MODEL_NAME"
 log_message "Device: $DEVICE"
+log_message "Quantization action: $ACTION"
 
 total_experiments=${#GRID_VALUES[@]}
 current_experiment=1
@@ -101,6 +108,13 @@ for grid_value in "${GRID_VALUES[@]}"; do
 
     # --model_base_path "${MODEL_BASE_PATH}" \
     # --dataset_base_path "${DATASET_BASE_PATH}" \
+
+    # Select quantization backend flag
+    if [[ "${ACTION}" == "dptq" ]]; then
+        QUANT_FLAG="--dptq"
+    else
+        QUANT_FLAG="--gptq"
+    fi
 
     # Run the compression script
     python "${COMPRESSION_SCRIPT}" \
@@ -120,14 +134,14 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --opt_steps_num "${opt_steps_num}" \
         --lam_loss_name "${LAM_LOSS_NAME}" \
         --next_strat_name "${NEXT_STRAT_NAME}" \
-        --gptq \
+        ${QUANT_FLAG} \
         --next_reg_lam "${NEXT_REG_LAM}" \
         --next_loss_lam "${NEXT_LOSS_LAM}" \
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        --smoothquant \
-        --lam_optimize \
+        # --smoothquant \
+        # --lam_optimize \
         # --do_hessian_plot \
         # --reinitialize_lam \
 
