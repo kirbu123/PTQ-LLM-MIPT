@@ -221,7 +221,7 @@ def quantize_model_by_oneshot(
         seed=42, reinitialize_lam=False
     ):
 
-    output_dir = os.path.join(output_dir, model_name, dataset_name, lam_loss_name, f'smoothing_strength={smoothing_strength}:dptq={dptq}:gptq={gptq}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
+    output_dir = os.path.join(output_dir, model_name, dataset_name, lam_loss_name, f'smoothing_strength={smoothing_strength}:smoothquant={smoothquant}:dptq={dptq}:gptq={gptq}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
 
     if smoothquant and smoothquantreg:
         ValueError('Evailable to use only one smooth method, picked two')

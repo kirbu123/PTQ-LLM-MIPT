@@ -1,4 +1,3 @@
-import math
 from copy import copy
 
 import torch
@@ -49,7 +48,9 @@ def _as_weight_matrix(module: torch.nn.Module) -> torch.Tensor | None:
     return W.to(dtype=GPTQ_PRECISION)
 
 
-def _lambda_value(lam_tensor: torch.Tensor | float | None, idx: int, device) -> torch.Tensor:
+def _lambda_value(
+    lam_tensor: torch.Tensor | float | None, idx: int, device
+) -> torch.Tensor:
     if lam_tensor is None:
         return torch.zeros((), device=device, dtype=GPTQ_PRECISION)
     if torch.is_tensor(lam_tensor):
@@ -64,22 +65,54 @@ def _lambda_value(lam_tensor: torch.Tensor | float | None, idx: int, device) -> 
     return lam.to(dtype=GPTQ_PRECISION).clamp_min(0)
 
 
+def _symmetrize(matrix: torch.Tensor) -> torch.Tensor:
+    return (matrix + matrix.t()) / 2
+
+
+def _make_spd(matrix: torch.Tensor, name: str) -> torch.Tensor:
+    """
+    Return a symmetric positive-definite copy suitable for Cholesky operations.
+
+    Calibration Hessians are positive semidefinite in theory, but small sample
+    counts and optional smoothing can leave tiny negative eigenvalues. GPTQ
+    already relies on damping; this helper only adds the minimum diagonal jitter
+    needed for the DPTQ congruence transform to remain numerically valid.
+    """
+    matrix = _symmetrize(matrix)
+    if not torch.isfinite(matrix).all():
+        raise ValueError(f"{name} contains non-finite values")
+
+    eye = torch.eye(matrix.shape[0], device=matrix.device, dtype=matrix.dtype)
+    diag_scale = torch.mean(torch.diag(matrix).abs()).clamp_min(1.0)
+    jitter = torch.finfo(matrix.dtype).eps * diag_scale
+    candidate = matrix
+
+    for _ in range(8):
+        try:
+            torch.linalg.cholesky(candidate)
+            return candidate
+        except torch._C._LinAlgError:
+            candidate = matrix + jitter * eye
+            jitter = jitter * 10
+
+    raise RuntimeError(f"Unable to make {name} positive definite")
+
+
 def build_downstream_q(
     num_rows: int,
     next_modules: list[torch.nn.Module | None] | None,
     lam_tensor: torch.Tensor | float | None,
     device: torch.device,
-    kernel_mode: str = "default",
 ) -> torch.Tensor | None:
     """
-    Build the downstream metric from Theorem 1:
+    Build the section 3 output-side downstream metric:
 
         Q_k = I + sum_{t=1}^k lambda_t P_t^T P_t,
         P_t = W_t W_{t-1} ... W_1.
 
-    Q_k acts on the output dimension of the current layer, i.e. on rows of W.
-    Incompatible downstream layers are skipped instead of forcing an invalid
-    product.
+    Q_k acts on the current layer output dimension, i.e. rows of W. It is used
+    for DPTQ objective accounting. The GPTQ-compatible Hessian refinement is
+    built separately from next-layer Hessian statistics.
     """
     if not next_modules:
         return None
@@ -91,97 +124,119 @@ def build_downstream_q(
     for idx, module_next in enumerate(next_modules):
         W_next = _as_weight_matrix(module_next)
         if W_next is None:
-            continue
+            break
         W_next = W_next.to(device=device)
 
         if W_next.shape[1] != P.shape[0]:
             logger.warning(
-                "Skipping DPTQ downstream layer {}: cannot multiply shapes "
+                "Stopping DPTQ downstream chain at layer {}: cannot multiply shapes "
                 "{} and {} for P_t = W_t ... W_1",
                 idx,
                 tuple(W_next.shape),
                 tuple(P.shape),
             )
-            continue
+            break
 
         P = W_next @ P
         lam = _lambda_value(lam_tensor, idx, device)
-        PtP = P.t() @ P
-
-        # Default mode is the exact paper formula.  Non-default kernel modes
-        # preserve the old pipeline hook for optional matrix smoothing.
-        if kernel_mode != "default":
-            PtP = apply_conv(PtP, mode=kernel_mode)
-
-        Q = Q + lam * PtP
+        Q = Q + lam * (P.t() @ P)
         used_any = True
 
-    return Q if used_any else None
+    return _symmetrize(Q) if used_any else None
+
+
+def build_downstream_hessian_factor(
+    H: torch.Tensor,
+    next_modules: list[torch.nn.Module | None] | None,
+    hessians_dict: dict[torch.nn.Module, torch.Tensor],
+    lam_tensor: torch.Tensor | float | None,
+    kernel_mode: str = "default",
+) -> torch.Tensor | None:
+    """
+    Build the GPTQ-compatible DPTQ factor Q_k^(H).
+
+    Sections 3.1-3.2 give the exact Kronecker Hessian
+    2(XX^T kron Q_k), which couples output rows. The practical GPTQ path keeps
+    the column-wise GPTQ loop and injects downstream curvature through
+
+        Q_k^(H) = I + sum_t lambda_t H_t,
+        H_opt = L Q_k^(H) L^T,  H = L L^T.
+
+    Only next-layer Hessians with the same input-coordinate shape as H can
+    participate. Other modules are skipped so the quantizer remains compatible
+    with non-square projections and heterogeneous blocks.
+    """
+    if not next_modules:
+        return None
+
+    device = H.device
+    factor = torch.eye(H.shape[0], device=device, dtype=GPTQ_PRECISION)
+    used_any = False
+
+    for idx, module_next in enumerate(next_modules):
+        if module_next is None or module_next not in hessians_dict:
+            continue
+
+        H_next = hessians_dict[module_next].to(device=device, dtype=GPTQ_PRECISION)
+        if H_next.shape != H.shape:
+            logger.warning(
+                "Skipping DPTQ next-layer Hessian {}: shape {} does not match "
+                "current Hessian shape {}",
+                idx,
+                tuple(H_next.shape),
+                tuple(H.shape),
+            )
+            continue
+
+        H_next = _symmetrize(H_next)
+        if kernel_mode != "default":
+            H_next = _symmetrize(apply_conv(H_next, mode=kernel_mode))
+
+        lam = _lambda_value(lam_tensor, idx, device)
+        factor = factor + lam * H_next
+        used_any = True
+
+    return _symmetrize(factor) if used_any else None
 
 
 def apply_dptq_refinement(
     H: torch.Tensor,
-    num_rows: int,
-    next_modules: list[torch.nn.Module | None] | None = None,
-    lam_tensor: torch.Tensor | float | None = None,
-    kernel_mode: str = "default",
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    downstream_hessian_factor: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Convert the DPTQ Hessian formula into the GPTQ-compatible Hessian.
+    Apply the multiplicative DPTQ refinement used by the GPTQ block loop.
 
-    The exact DPTQ Hessian is
-
-        H_full = 2 (X X^T kron Q_k),
-
-    where Q_k weights row/output errors.  The existing GPTQ loop accepts only a
-    d_in x d_in input Hessian.  For compatible square projections we use the
-    paper's multiplicative surrogate
-
-        H_X = L L^T,  H_X^opt = L Q_k L^T,
-
-    which keeps the Hessian symmetric positive definite for Cholesky inversion.
-    If Q_k has a different size from H_X, the exact Kronecker Hessian cannot be
-    represented in this framework, so we leave H_X unchanged and still return Q_k
-    for DPTQ loss accounting and diagnostics.
+    The returned ``H_init`` is the damped GPTQ Hessian before refinement. If no
+    compatible downstream Hessian factor is available, the function is an
+    identity transform.
     """
     H_init = H.clone()
-    Q = build_downstream_q(
-        num_rows=num_rows,
-        next_modules=next_modules,
-        lam_tensor=lam_tensor,
-        device=H.device,
-        kernel_mode=kernel_mode,
-    )
-    if Q is None:
-        return H, H_init, None
+    if downstream_hessian_factor is None:
+        return H, H_init
 
-    if Q.shape != H.shape:
+    if downstream_hessian_factor.shape != H.shape:
         logger.warning(
-            "DPTQ Q_k has shape {}, but GPTQ input Hessian has shape {}. "
-            "Keeping H_X unchanged because the full 2(XX^T kron Q_k) Hessian "
-            "does not fit the row-wise GPTQ interface.",
-            tuple(Q.shape),
+            "DPTQ downstream Hessian factor has shape {}, but GPTQ Hessian has "
+            "shape {}. Keeping the local GPTQ Hessian unchanged.",
+            tuple(downstream_hessian_factor.shape),
             tuple(H.shape),
         )
-        return H, H_init, Q
+        return H, H_init
 
     try:
-        H_sym = (H + H.t()) / 2
-        Q_sym = (Q + Q.t()) / 2
-
-        # H_X = L L^T and H_X^opt = L Q_k L^T.  This is the SPD congruence
-        # refinement from the DPTQ algorithmic section.
-        jitter = torch.finfo(H.dtype).eps * torch.mean(torch.diag(H_sym)).abs()
-        diag = torch.arange(H_sym.shape[0], device=H_sym.device)
-        H_sym[diag, diag] += jitter
-        Q_sym[diag, diag] += jitter
-        L = torch.linalg.cholesky(H_sym)
-        H_opt = L @ Q_sym @ L.t()
-        H_opt = (H_opt + H_opt.t()) / 2
-        return H_opt, H_init, Q_sym
-    except torch._C._LinAlgError:
-        logger.warning("Failed to build DPTQ refined Hessian; falling back to GPTQ H_X")
-        return H_init, H_init, Q
+        H_spd = _make_spd(H, "DPTQ local Hessian")
+        factor = downstream_hessian_factor.to(device=H.device, dtype=H.dtype)
+        factor = _make_spd(factor, "DPTQ downstream Hessian factor")
+        L = torch.linalg.cholesky(H_spd)
+        H_opt = L @ factor @ L.t()
+        H_opt = _make_spd(H_opt, "DPTQ refined Hessian")
+        return H_opt, H_init
+    except (RuntimeError, ValueError) as err:
+        logger.warning(
+            "Failed to build DPTQ refined Hessian ({}); falling back to GPTQ H_X",
+            err,
+        )
+        return H_init, H_init
 
 
 def quantize_weight(
@@ -204,9 +259,10 @@ def quantize_weight(
         L(What) = ||W X - What X||_F^2
                   + sum_t lambda_t ||P_t (W - What) X||_F^2.
 
-    The theorem gives H_full = 2(XX^T kron Q_k).  This implementation builds
-    Q_k exactly from downstream weights and applies the GPTQ-compatible
-    refinement H_X^opt = L Q_k L^T when dimensions permit.
+    The theorem gives H_full = 2(XX^T kron Q_k). This implementation builds
+    the output-side Q_k from downstream weights for objective accounting, then
+    applies the GPTQ-compatible refinement H_X^opt = L Q_k^(H) L^T using
+    compatible next-layer Hessian statistics.
     """
     strategy = quant_args.strategy
     actorder = quant_args.actorder
@@ -224,22 +280,32 @@ def quantize_weight(
     num_columns = W.shape[1]
 
     H = hessians_dict[module]
-    if next_modules is not None and lam_tensor is not None:
-        H, H_init, Q_dptq = apply_dptq_refinement(
+    has_downstream = next_modules is not None and any(
+        module_next is not None for module_next in next_modules
+    )
+    use_dptq = has_downstream and lam_tensor is not None
+    Q_hessian = None
+    Q_objective = None
+    if use_dptq:
+        Q_hessian = build_downstream_hessian_factor(
             H=H,
-            num_rows=num_rows,
             next_modules=next_modules,
+            hessians_dict=hessians_dict,
             lam_tensor=lam_tensor,
             kernel_mode=kernel_mode,
         )
+        Q_objective = build_downstream_q(
+            num_rows=num_rows,
+            next_modules=next_modules,
+            lam_tensor=lam_tensor,
+            device=H.device,
+        )
 
-        if save_dir is not None:
-            save_matrix_results(module, f"{name}_H_init", M=H_init, save_dir=save_dir)
-            save_matrix_results(module, f"{name}_H_dptq", M=H, save_dir=save_dir)
-            if Q_dptq is not None:
-                save_matrix_results(module, f"{name}_Q_dptq", M=Q_dptq, save_dir=save_dir)
-    else:
-        Q_dptq = None
+        if Q_hessian is None:
+            logger.warning(
+                "DPTQ found no compatible next-layer Hessians for this module; "
+                "the GPTQ input Hessian will be used unchanged."
+            )
 
     observer = Observer.load_from_registry(
         "memoryless_minmax",
@@ -256,11 +322,15 @@ def quantize_weight(
 
         if actorder == ActivationOrdering.GROUP:
             W, H, perm = _apply_activation_ordering(W, H)
+            if Q_hessian is not None:
+                Q_hessian = Q_hessian[perm][:, perm]
             update_offload_parameter(module, "weight_g_idx", g_idx)
             scale, zero_point = observer(W)
         elif actorder == ActivationOrdering.WEIGHT:
             scale, zero_point = observer(W)
             W, H, perm = _apply_activation_ordering(W, H)
+            if Q_hessian is not None:
+                Q_hessian = Q_hessian[perm][:, perm]
             g_idx = g_idx[perm]
         else:
             scale, zero_point = observer(W)
@@ -285,6 +355,30 @@ def quantize_weight(
         damp = percdamp * torch.mean(torch.diag(H))
         diag = torch.arange(H.shape[0], device=H.device)
         H[diag, diag] += damp
+        if use_dptq:
+            H, H_init = apply_dptq_refinement(
+                H=H,
+                downstream_hessian_factor=Q_hessian,
+            )
+            if save_dir is not None:
+                save_matrix_results(
+                    module, f"{name}_H_init", M=H_init, save_dir=save_dir
+                )
+                save_matrix_results(module, f"{name}_H_dptq", M=H, save_dir=save_dir)
+                if Q_hessian is not None:
+                    save_matrix_results(
+                        module,
+                        f"{name}_Q_hessian_dptq",
+                        M=Q_hessian,
+                        save_dir=save_dir,
+                    )
+                if Q_objective is not None:
+                    save_matrix_results(
+                        module,
+                        f"{name}_Q_objective_dptq",
+                        M=Q_objective,
+                        save_dir=save_dir,
+                    )
         H = torch.linalg.cholesky(H)
         H = torch.cholesky_inverse(H)
         H = torch.linalg.cholesky(H, upper=True)
@@ -335,7 +429,9 @@ def quantize_weight(
                     altered_qargs,
                 )
             else:
-                raise ValueError(f"Quantization strategy is not supported for DPTQ: {strategy}")
+                raise ValueError(
+                    f"Quantization strategy is not supported for DPTQ: {strategy}"
+                )
 
             Q1[:, i] = q
             W1_adj[:, i] = w
@@ -343,8 +439,8 @@ def quantize_weight(
             # GPTQ loss is ||e_j||_2^2 / d^2.  DPTQ replaces the row metric by
             # e_j^T Q_k e_j / d^2, matching ||P_t E X||_F^2 in the objective.
             col_err = w - q
-            if Q_dptq is not None and Q_dptq.shape[0] == col_err.shape[0]:
-                Q_loss = Q_dptq.to(device=col_err.device, dtype=col_err.dtype)
+            if Q_objective is not None and Q_objective.shape[0] == col_err.shape[0]:
+                Q_loss = Q_objective.to(device=col_err.device, dtype=col_err.dtype)
                 dptq_col_loss = col_err @ Q_loss @ col_err
                 losses1[:, i] = dptq_col_loss / (num_rows * d**2)
             else:
