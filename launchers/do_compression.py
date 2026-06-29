@@ -6,7 +6,8 @@ sys.path.append('./llm-compressor/src')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # from gpt2_conv_linear import convert_conv1d_to_linear, convert_linear_to_conv1d
 
-from llmcompressor.modifiers.quantization import GPTQModifier
+from llmcompressor.modifiers.awq import AWQModifier
+from llmcompressor.modifiers.quantization import GPTQModifier, QuantizationModifier
 from llmcompressor.modifiers.smoothquant import SmoothQuantModifier, SmoothQuantRegModifier
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -215,13 +216,23 @@ def quantize_model_by_oneshot(
         model_name, dataset_name, dataset_subset, output_dir,
         scheme="W8A8", targets="Linear", ignore=["lm_head"], next_reg_lam=0., next_loss_lam=0., kernel_mode='default',
         max_seq_length=1024, num_calibration_samples=512, smoothing_strength=0.5,
-        hes_reg_lam=0.1, gptq=True, dptq=False, smoothquant=False, smoothquantreg=True, lam_optimize=False, do_hessian_plot=False,
+        hes_reg_lam=0.1, gptq=True, dptq=False, awq=False, rtn=False,
+        smoothquant=False, smoothquantreg=True, lam_optimize=False, do_hessian_plot=False,
         lam_optimize_method='multistep', lam_lr=3e-4, k_next=1, opt_steps_num=10,
         lam_loss_name='HessianLossNormed', next_strat_name='BasicStrat',
         seed=42, reinitialize_lam=False
     ):
 
-    output_dir = os.path.join(output_dir, model_name, dataset_name, lam_loss_name, f'smoothing_strength={smoothing_strength}:smoothquant={smoothquant}:dptq={dptq}:gptq={gptq}:next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}')
+    output_name = (
+        f'smoothing_strength={smoothing_strength}:smoothquant={smoothquant}:'
+        f'dptq={dptq}:gptq={gptq}:awq={awq}:rtn={rtn}:'
+        f'next_reg_lam={next_reg_lam}:next_loss_lam={next_loss_lam}:'
+        f'lam_lr={lam_lr}:k_next={k_next}:opt_steps_num={opt_steps_num}:'
+        f'kernel_mode={kernel_mode}:hes_reg_lam={hes_reg_lam}:seed={seed}'
+    )
+    output_dir = os.path.join(
+        output_dir, model_name, dataset_name, lam_loss_name, output_name
+    )
 
     if smoothquant and smoothquantreg:
         ValueError('Evailable to use only one smooth method, picked two')
@@ -231,7 +242,19 @@ def quantize_model_by_oneshot(
         recipe = recipe + [SmoothQuantModifier(smoothing_strength=smoothing_strength)]
     if smoothquantreg:
         recipe = recipe + [SmoothQuantRegModifier(smoothing_strength=smoothing_strength, hes_reg_lam=hes_reg_lam)]
-    if gptq or dptq:
+    if awq:
+        recipe = recipe + [AWQModifier(
+            scheme=scheme,
+            targets=targets,
+            ignore=ignore,
+        )]
+    elif rtn:
+        recipe = recipe + [QuantizationModifier(
+            scheme=scheme,
+            targets=targets,
+            ignore=ignore,
+        )]
+    elif gptq or dptq:
         recipe = recipe + [GPTQModifier(
             scheme=scheme,
             targets=targets,
@@ -332,8 +355,12 @@ def parse_args():
                    help='Enable GPTQ quantization')
     quant_method_group.add_argument('--dptq', action='store_true',
                    help='Enable DPTQ quantization')
+    quant_method_group.add_argument('--awq', action='store_true',
+                   help='Enable AWQ quantization')
+    quant_method_group.add_argument('--rtn', action='store_true',
+                   help='Enable RTN quantization')
     parser.add_argument('--scheme', type=str, default='W8A8',
-                       choices=['W8A8', 'W4A8', 'W4A16', 'W2A16'],
+                       choices=['W8A8', 'W4A8', 'W4A16', 'W4A16_ASYM', 'W2A16'],
                        help='Quantization scheme')
     parser.add_argument('--targets', type=str, default='Linear',
                        help='Target modules to quantize (comma-separated)')
@@ -404,6 +431,8 @@ if __name__ == "__main__":
         max_seq_length=args.max_seq_length,
         gptq=args.gptq,
         dptq=args.dptq,
+        awq=args.awq,
+        rtn=args.rtn,
         smoothquant=args.smoothquant,
         smoothquantreg=args.smoothquantreg,
         hes_reg_lam=args.hes_reg_lam,

@@ -4,8 +4,8 @@
 DEVICE="cuda:1"
 ACTION="${1:-gptq}"
 
-if [[ "${ACTION}" != "gptq" && "${ACTION}" != "dptq" ]]; then
-    echo "Invalid action: ${ACTION}. Use 'gptq' or 'dptq'."
+if [[ "${ACTION}" != "gptq" && "${ACTION}" != "dptq" && "${ACTION}" != "awq" && "${ACTION}" != "rtn" ]]; then
+    echo "Invalid action: ${ACTION}. Use 'gptq', 'dptq', 'awq', or 'rtn'."
     exit 1
 fi
 
@@ -81,6 +81,11 @@ export CUDA_VISIBLE_DEVICES="${DEVICE#cuda:}"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 LOG_FILE="${LOG_DIR}/grid_search_${TIMESTAMP}.log"
 
+QUANT_SCHEME="${SCHEME}"
+if [[ "${ACTION}" == "awq" && "${SCHEME}" == "W4A8" ]]; then
+    QUANT_SCHEME="W4A16_ASYM"
+fi
+
 # Function to log messages
 log_message() {
     local message="$1"
@@ -92,6 +97,7 @@ log_message "Values to test: ${GRID_VALUES[*]}"
 log_message "Model: $MODEL_NAME"
 log_message "Device: $DEVICE"
 log_message "Quantization action: $ACTION"
+log_message "Quantization scheme: $QUANT_SCHEME"
 
 total_experiments=${#GRID_VALUES[@]}
 current_experiment=1
@@ -110,11 +116,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
     # --dataset_base_path "${DATASET_BASE_PATH}" \
 
     # Select quantization backend flag
-    if [[ "${ACTION}" == "dptq" ]]; then
-        QUANT_FLAG="--dptq"
-    else
-        QUANT_FLAG="--gptq"
-    fi
+    QUANT_FLAG="--${ACTION}"
 
     # Run the compression script
     python "${COMPRESSION_SCRIPT}" \
@@ -122,7 +124,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --model_name "${MODEL_NAME}" \
         --dataset_name "${DATASET_NAME}" \
         --dataset_subset "${DATASET_SUBSET}" \
-        --scheme "${SCHEME}" \
+        --scheme "${QUANT_SCHEME}" \
         --targets "${TARGETS}" \
         --num_calibration_samples "${NUM_CALIBRATION_SAMPLES}" \
         --max_seq_length "${MAX_SEQ_LENGTH}" \
