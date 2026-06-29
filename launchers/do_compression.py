@@ -18,19 +18,11 @@ import subprocess
 from deepspeed.compression.helper import convert_conv1d_to_linear
 import torch
 
-BYTES_PRECISION_DICT = {
-    torch.float32: 4,
-    torch.float16: 2,
-    torch.int32: 4,
-    torch.int16: 2,
-    torch.int8: 1
-}
-
 def estimate_model_params(model):
     """Estimate model memory usage based on parameters and precision"""
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total_byte_params = sum(p.numel() * BYTES_PRECISION_DICT[p.dtype] for p in model.parameters())
+    total_byte_params = sum(p.numel() * p.element_size() for p in model.parameters())
 
     # Calculate memory based on precision
     model_memory_gb = total_byte_params / (1024**3)

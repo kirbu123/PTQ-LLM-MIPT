@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:1"
-ACTION="${1:-gptq}"
+DEVICE="cuda:2"
+ACTION="${1:-awq}"
 
 if [[ "${ACTION}" != "gptq" && "${ACTION}" != "dptq" && "${ACTION}" != "awq" && "${ACTION}" != "rtn" ]]; then
     echo "Invalid action: ${ACTION}. Use 'gptq', 'dptq', 'awq', or 'rtn'."
@@ -14,7 +14,7 @@ DATASET_BASE_PATH="/home/buka2004/data/datasets/"
 
 # Large models
 # MODEL_NAME="TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-MODEL_NAME="facebook/opt-350m"
+MODEL_NAME="facebook/opt-125m"
 # MODEL_NAME="facebook/opt-1.3b"
 # MODEL_NAME="Qwen/Qwen2-0.5B"
 
@@ -62,7 +62,7 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/smooth/optimize" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/awq/optimize" # no-optimize
 
 LOG_DIR="./grid_search_logs"
 
@@ -142,8 +142,8 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        --smoothquant \
         --lam_optimize \
+        # --smoothquant \
         # --do_hessian_plot \
         # --reinitialize_lam \
 
