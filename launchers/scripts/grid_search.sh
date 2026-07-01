@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:2"
-ACTION="${1:-awq}"
+DEVICE="cuda:1"
+ACTION="${1:-gptq}"
 
 if [[ "${ACTION}" != "gptq" && "${ACTION}" != "dptq" && "${ACTION}" != "awq" && "${ACTION}" != "rtn" ]]; then
     echo "Invalid action: ${ACTION}. Use 'gptq', 'dptq', 'awq', or 'rtn'."
@@ -48,8 +48,8 @@ NEXT_REG_LAM=0.0 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
-LAM_LOSS_NAME="ElboPowerLawLossNew"
-# ElboPowerLawLoss ElboPowerLawLossNew HessianLossTraceOnlyScaled ElboPowerLawLossTrunc 
+LAM_LOSS_NAME="ElboPowerLawLossNewFast"
+# ElboPowerLawLoss ElboPowerLawLossNewFast ElboPowerLawLossNew HessianLossTraceOnlyScaled ElboPowerLawLossTrunc 
 # ReformulatedElboPowerLawLossTrunc HessianLossSoftCos 
 # HessianLossTraceReformulatedInverse HessianLossTraceReformulated
 # HessianLossTraceOnlyScaledReformulated HessianLossTraceOnlyScaledReformulatedInverse
@@ -62,7 +62,7 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/awq/optimize" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/no-smooth/optimize" # no-optimize
 
 LOG_DIR="./grid_search_logs"
 

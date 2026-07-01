@@ -815,6 +815,98 @@ class ElboPowerLawLossNew(ElboPowerLawLoss):
         )
 
 
+class ElboPowerLawLossNewFast(ElboPowerLawLoss):
+    def __init__(self):
+        super().__init__()
+        self.with_eigens = True
+
+    def forward(
+        self,
+        lam,
+        module,
+        next_modules,
+        hessians,
+        eigens,
+        kernel_mode,
+        eps=1e-6
+    ):
+        H = hessians[module]
+        dummy_loss = torch.tensor(
+            0.0, dtype=torch.float32, device=H.device, requires_grad=True
+        )
+
+        if next_modules is None or not any(
+            module_next is not None for module_next in next_modules
+        ):
+            return dummy_loss, None
+
+        try:
+            eigenvalues = eigens[module]["eigenvalues"]
+            if eigenvalues is None or eigenvalues.numel() != H.shape[0]:
+                return dummy_loss, None
+
+            P = torch.eye(H.shape[0], device=H.device, dtype=H.dtype)
+            q_diag = torch.ones(H.shape[0], device=H.device, dtype=H.dtype)
+            is_lam = False
+
+            for i, module_next in enumerate(next_modules):
+                if module_next is None:
+                    continue
+
+                Wi = module_next.weight.detach().to(device=H.device, dtype=H.dtype)
+                if Wi.shape[1] != P.shape[0]:
+                    return dummy_loss, None
+
+                P = Wi @ P
+                if kernel_mode == "default":
+                    q_update_diag = torch.sum(P * P, dim=0)
+                else:
+                    q_update_diag = torch.diag(apply_conv(P.T @ P, mode=kernel_mode))
+
+                if torch.is_tensor(lam):
+                    lam_i = lam[i].to(device=H.device, dtype=H.dtype)
+                else:
+                    lam_i = torch.tensor(float(lam), device=H.device, dtype=H.dtype)
+                q_diag = q_diag + lam_i * q_update_diag
+                is_lam = True
+
+            if not is_lam:
+                return dummy_loss, None
+
+            downstream_scale = torch.mean(q_diag).to(
+                device=eigenvalues.device, dtype=eigenvalues.dtype
+            )
+            eigenvalues = eigenvalues * downstream_scale
+        except RuntimeError:
+            return dummy_loss, None
+
+        eigens_proxy = dict(eigens)
+        eigens_proxy[module] = dict(eigens_proxy.get(module, {}))
+        eigens_proxy[module]["eigenvalues"] = eigenvalues
+
+        sentinel_next_module = object()
+        eigens_proxy[sentinel_next_module] = {
+            "eigenvalues": torch.zeros_like(eigenvalues)
+        }
+
+        if torch.is_tensor(lam):
+            parent_lam = lam.new_zeros((1,))
+        else:
+            parent_lam = torch.zeros(
+                1, dtype=torch.float32, device=eigenvalues.device
+            )
+
+        return super().forward(
+            parent_lam,
+            module,
+            [sentinel_next_module],
+            hessians,
+            eigens_proxy,
+            kernel_mode,
+            eps,
+        )
+
+
 class ElboPowerLawLossRefactor(BasicLoss):
     def __init__(self):
         super().__init__()
@@ -1361,6 +1453,7 @@ LOSS_DICT = {
     'MSEPowerLawLoss': MSEPowerLawLoss,
     'ElboPowerLawLoss': ElboPowerLawLoss,
     'ElboPowerLawLossNew': ElboPowerLawLossNew,
+    'ElboPowerLawLossNewFast': ElboPowerLawLossNewFast,
     'ElboPowerLawLossRefactor': ElboPowerLawLossRefactor,
     'ElboPowerLawLossRefactorInverse': ElboPowerLawLossRefactorInverse,
     'HessianLossCombined': HessianLossCombined,
