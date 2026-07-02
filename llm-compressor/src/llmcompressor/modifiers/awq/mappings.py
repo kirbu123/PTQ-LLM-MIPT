@@ -142,6 +142,28 @@ _bloom_mappings = [
     #     ["re:.*dense$"]
     # ),
 ]
+
+# OPT names its layers differently to the Llama-style default (self_attn_layer_norm
+# instead of input_layernorm, out_proj instead of o_proj, fc1/fc2 instead of
+# gate/up/down_proj). Mirrors AutoAWQ's OPT scaling. Assumes pre-LN
+# (do_layer_norm_before=True, e.g. opt-125m/1.3b/6.7b).
+# NOTE: final_layer_norm exists both per-decoder-layer and once at the model level
+# (model.decoder.final_layer_norm, which feeds lm_head). The smooth regex is scoped
+# to `layers.<idx>.final_layer_norm` so the model-level norm is not matched (it would
+# otherwise resolve every fc1 in the model as balance layers).
+_opt_mappings = [
+    AWQMapping(
+        "re:.*self_attn_layer_norm$",
+        ["re:.*q_proj$", "re:.*k_proj$", "re:.*v_proj$"],
+    ),
+    AWQMapping("re:.*v_proj$", ["re:.*out_proj$"]),
+    AWQMapping(
+        r"re:.*layers\.\d+\.final_layer_norm$",
+        ["re:.*fc1$"],
+    ),
+    AWQMapping("re:.*fc1$", ["re:.*fc2$"]),
+]
+
 AWQ_MAPPING_REGISTRY: dict[str, list[AWQMapping]] = {
     "BloomForCausalLM": _bloom_mappings,
     "CohereForCausalLM": _cohere_mappings,
@@ -155,6 +177,7 @@ AWQ_MAPPING_REGISTRY: dict[str, list[AWQMapping]] = {
     "Llama4ForConditionalGeneration": _default_mappings,
     "Mistral3ForConditionalGeneration": _default_mappings,
     "MistralForCausalLM": _default_mappings,
+    "OPTForCausalLM": _opt_mappings,
     "Phi3ForCausalLM": _phi_mappings,
     "Phi3VForCausalLM": _phi_mappings,
     "Qwen2ForCausalLM": _default_mappings,

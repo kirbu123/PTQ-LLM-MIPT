@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Constants - Update these as needed
-DEVICE="cuda:1"
-ACTION="${1:-gptq}"
+DEVICE="cuda:3"
+ACTION="${1:-awq}"
 
 if [[ "${ACTION}" != "gptq" && "${ACTION}" != "dptq" && "${ACTION}" != "awq" && "${ACTION}" != "rtn" ]]; then
     echo "Invalid action: ${ACTION}. Use 'gptq', 'dptq', 'awq', or 'rtn'."
@@ -36,15 +36,15 @@ DATASET_NAME="wikitext"
 DATASET_SUBSET="wikitext-2-raw-v1"
 SCHEME="W4A8"
 TARGETS="Linear"
-NUM_CALIBRATION_SAMPLES=1024
-MAX_SEQ_LENGTH=1024
+NUM_CALIBRATION_SAMPLES=1024 # 1024
+MAX_SEQ_LENGTH=256 # 1024
 SEED=0
 LAM_LR=3e-4
-K_NEXT=6
+K_NEXT=0
 opt_steps_num=1000 # set 1 for debug !!!
 SMOOTHING_STRENGTH=0.5
 HES_REG_LAM=0.0
-NEXT_REG_LAM=0.0 # for multistep: 0.0
+NEXT_REG_LAM=0.5 # for multistep: 0.0
 NEXT_LOSS_LAM=0.0
 KERNEL_MODE="default"
 LAM_OPTIMIZE_METHOD="multistep"
@@ -62,7 +62,7 @@ GRID_VALUES=(0 10 20 30 40 50 60 70 80 90)
 
 # Paths
 COMPRESSION_SCRIPT="./launchers/do_compression.py"
-OUTPUT_BASE_DIR="./quant_checkpoints/no-smooth/optimize" # no-optimize
+OUTPUT_BASE_DIR="./quant_checkpoints/awq-next/optimize" # no-optimize
 
 LOG_DIR="./grid_search_logs"
 
@@ -142,7 +142,7 @@ for grid_value in "${GRID_VALUES[@]}"; do
         --kernel_mode "${KERNEL_MODE}" \
         --lam_optimize_method "${LAM_OPTIMIZE_METHOD}" \
         --tasks "${TASKS}" \
-        --lam_optimize \
+        # --lam_optimize \
         # --smoothquant \
         # --do_hessian_plot \
         # --reinitialize_lam \
