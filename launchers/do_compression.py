@@ -239,6 +239,9 @@ def quantize_model_by_oneshot(
             scheme=scheme,
             targets=targets,
             ignore=ignore,
+            k_next=k_next,
+            next_reg_lam=next_reg_lam,
+            next_strat_name=next_strat_name,
         )]
     elif rtn:
         recipe = recipe + [QuantizationModifier(

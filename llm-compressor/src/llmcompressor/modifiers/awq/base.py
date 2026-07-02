@@ -5,6 +5,7 @@ from typing import Literal
 import torch
 from compressed_tensors.quantization import disable_quantization
 from compressed_tensors.utils import (
+    align_module_device,
     align_modules,
     get_execution_device,
     match_named_modules,
@@ -28,6 +29,7 @@ from llmcompressor.modifiers.utils.hooks import HooksMixin
 from llmcompressor.pipelines.cache import IntermediatesCache
 from llmcompressor.utils.fsdp.helpers import get_fsdp_parent
 from llmcompressor.utils.helpers import calibration_forward_context
+from llmcompressor.utils.next_strats import NEXT_STRATS_DICT
 from llmcompressor.utils.pytorch.module import get_layer_by_name
 
 __all__ = ["AWQModifier"]
@@ -132,6 +134,14 @@ class AWQModifier(Modifier, QuantizationMixin):
     offload_device: torch.device | None = None
     duo_scaling: bool | Literal["both"] = True
     n_grid: int = 20
+    # Downstream-layer regularization for the scale grid search (see _compute_loss).
+    # Number of subsequent layers whose weights extend the reconstruction loss, and
+    # the (constant) coefficient applied to each additive term. next_reg_lam == 0.0
+    # reproduces the standard AWQ loss. next_strat_name selects which subsequent
+    # layers count, reusing the GPTQ strategy registry (NEXT_STRATS_DICT).
+    k_next: int = 1
+    next_reg_lam: float = 0.0
+    next_strat_name: str = "AllLinears"
 
     # Private vars set during validation
     _num_bits: int | None = PrivateAttr(default=None)
@@ -148,6 +158,11 @@ class AWQModifier(Modifier, QuantizationMixin):
     _smooth_activation_means: dict[str, tuple[torch.FloatTensor, int]] = PrivateAttr(
         default_factory=dict
     )
+    # Downstream-regularization state (built lazily in _apply_smoothing).
+    # _next_strat: resolved NEXT_STRATS_DICT[self.next_strat_name] callable.
+    # _next_mapped_lists: GPTQ-style {"names"/"modules": {postfix: ordered list}}.
+    _next_strat = PrivateAttr(default=None)
+    _next_mapped_lists: dict = PrivateAttr(default_factory=dict)
 
     # NOTE: different name chosen to avoid collision with
     # QuantizationMixin.validate_model_after, which must be called first
@@ -452,6 +467,22 @@ class AWQModifier(Modifier, QuantizationMixin):
 
         :param model: model to apply smoothing to
         """
+        # Build the GPTQ-style ordered module index used to locate the subsequent
+        # layers for the downstream-regularization loss (see _get_next_modules and
+        # _compute_loss). Built once; module references are stable across pipeline
+        # segments, so a single pass over the full model is sufficient.
+        if self._next_strat is None:
+            self._next_strat = NEXT_STRATS_DICT[self.next_strat_name]
+            self._next_mapped_lists = {"names": {}, "modules": {}}
+            for name, module in model.named_modules():
+                if not isinstance(module, torch.nn.Linear):
+                    continue
+                for postfix in self._next_strat(name.split(".")[-1]):
+                    self._next_mapped_lists["names"].setdefault(postfix, []).append(name)
+                    self._next_mapped_lists["modules"].setdefault(postfix, []).append(
+                        module
+                    )
+
         # NOTE: When using SequentialPipeline, not all the mappings
         # will have cached activations in the segment being udpated
         mappings_to_smooth = [
@@ -517,9 +548,18 @@ class AWQModifier(Modifier, QuantizationMixin):
 
                 x_mean = self._smooth_activation_means[mapping.smooth_name][0]
 
+                # Subsequent-layer weights for the downstream-regularization terms
+                # of the reconstruction loss (empty list => standard AWQ loss).
+                next_modules = self._get_next_modules(mapping)
+
                 # [STEP 4]: Compute loss
                 best_scales = self._compute_best_scale(
-                    x_mean, w_mean, parent_module, balance_layers, fp16_outputs
+                    x_mean,
+                    w_mean,
+                    parent_module,
+                    balance_layers,
+                    fp16_outputs,
+                    next_modules,
                 )
 
                 @torch.no_grad()
@@ -571,6 +611,35 @@ class AWQModifier(Modifier, QuantizationMixin):
             v.batch_intermediates.clear()
         self._assert_all_activations_consumed()
 
+    def _get_next_modules(self, mapping: ResolvedMapping) -> list[Module | None]:
+        """
+        Return the k_next subsequent layers used by the downstream-regularization
+        loss, mirroring GPTQModifier.compress_modules. Each balance layer is looked
+        up in its strategy-defined postfix bucket (self._next_mapped_lists); the
+        first balance layer that has a non-empty bucket anchors the lookup and the
+        next k_next entries are returned (padded with None past the end).
+
+        Any failure returns [] so the scale search falls back to the standard AWQ
+        loss with no regularization.
+        """
+        if self.next_reg_lam == 0.0 or self.k_next <= 0 or not self._next_mapped_lists:
+            return []
+        for name in mapping.balance_names:
+            try:
+                postfix = name.split(".")[-1]
+                name_list = self._next_mapped_lists["names"].get(postfix, [])
+                module_list = self._next_mapped_lists["modules"].get(postfix, [])
+                if name not in name_list:
+                    continue
+                start = name_list.index(name) + 1
+                return [
+                    module_list[j] if j < len(module_list) else None
+                    for j in range(start, start + self.k_next)
+                ]
+            except Exception:
+                continue
+        return []
+
     def _run_samples(self, module: Module) -> list[torch.Tensor]:
         outputs = [
             module(**batch_kwargs) for batch_kwargs in self._parent_args_cache[module]
@@ -588,15 +657,18 @@ class AWQModifier(Modifier, QuantizationMixin):
         parent_module: torch.nn.Module,
         linears2scale: list[torch.nn.Linear],
         fp16_outputs: list[torch.Tensor],
+        next_modules: list[Module | None] | None = None,
     ) -> torch.Tensor:
         """
         Compute loss and select best scales
 
         L(s) = || Q(W * s) (s^-1 * X) - W * X ||
+             + next_reg_lam * sum_j || (W_j...W_1) (Q(W * s)(s^-1 X) - W * X) ||
         Q: weight quantization function | _pseudo_quantize_tensor(W * s)
         X: inputs from calib dataset    | X
         W: original weights in FP16     | layer
         s: per channel scaling factor   | s^-1 * X
+        W_1..W_k: next_modules weights  | downstream-regularization terms
         """
         history = []
         best_ratio = -1
@@ -658,8 +730,11 @@ class AWQModifier(Modifier, QuantizationMixin):
             # W * X
             int_w_outputs = self._run_samples(parent_module)
 
-            # compute mean squared error (L2 norm)
-            loss = self._compute_loss(fp16_outputs, int_w_outputs, device)
+            # compute mean squared error (L2 norm), optionally with the
+            # downstream-layer regularization terms propagated through next_modules
+            loss = self._compute_loss(
+                fp16_outputs, int_w_outputs, device, next_modules
+            )
 
             history.append(loss)
             if loss < best_error:
@@ -690,22 +765,45 @@ class AWQModifier(Modifier, QuantizationMixin):
         fp16_outputs: list[torch.Tensor],
         int_w_outputs: list[torch.Tensor],
         device: torch.device,
+        next_modules: list[Module | None] | None = None,
     ) -> torch.Tensor:
         loss = 0.0
         num_elements = 0
 
+        # Whether to add the downstream-regularization terms of the reconstruction
+        # loss (see _compute_best_scale docstring). Disabled when next_reg_lam == 0
+        # or no subsequent layers were resolved, in which case this reduces to the
+        # standard AWQ MSE loss.
+        use_next_reg = bool(next_modules) and self.next_reg_lam != 0.0
+
         # Compute the MSE loss for each batch
         for fp16_batch, int_w_batch in zip(fp16_outputs, int_w_outputs):
-            batch_loss = (
-                (fp16_batch.to(device) - int_w_batch.to(device))
-                .view(-1)
-                .float()
-                .pow(2)
-                .sum()
-                .item()
-            )
-            loss += batch_loss
+            diff = (int_w_batch.to(device) - fp16_batch.to(device)).float()
+            loss += diff.view(-1).pow(2).sum().item()
             num_elements += fp16_batch.numel()
+
+            # Downstream-layer regularization: propagate the output difference
+            # D = Q(W*s)(s^-1 X) - W*X through the cumulative product of the next
+            # layer weights and penalize its norm. Each term is guarded: on any
+            # failure (shape mismatch, offloaded/missing weight, ...) the cumulative
+            # product cannot continue, so we stop and keep the terms computed so far.
+            if use_next_reg:
+                running = diff
+                for mod in next_modules:
+                    if mod is None:
+                        break
+                    try:
+                        with align_module_device(mod):
+                            w_next = mod.weight.detach().to(
+                                device=device, dtype=running.dtype
+                            )
+                        running = torch.nn.functional.linear(running, w_next)
+                        loss += (
+                            self.next_reg_lam
+                            * running.view(-1).pow(2).sum().item()
+                        )
+                    except Exception:
+                        break
 
         # Normalize the loss by the total number of elements
         loss /= num_elements
